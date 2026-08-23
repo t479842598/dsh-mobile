@@ -510,7 +510,7 @@ final class DshDirectClient: GatewayClient {
 
     override func applicationDidBecomeActive() {
         isApplicationInBackground = false
-        guard wantsConnection, state != .connected, let httpBaseURL else { return }
+        guard wantsConnection, state != .connected, httpBaseURL != nil else { return }
         reconnectTask?.cancel()
         reconnectTask = nil
         let generation = connectGeneration
