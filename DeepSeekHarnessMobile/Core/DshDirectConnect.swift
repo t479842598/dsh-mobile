@@ -476,6 +476,12 @@ final class DshDirectClient: GatewayClient {
     /// 审批解决帧只带 approvalId，需要反查 rpcId 清理提问状态。
     private var approvalRpcIds: [String: String] = [:]
     private var keepaliveTask: Task<Void, Never>?
+    /// host.describe 返回的默认模型（用于 requestDefaultModel 帧，无需 settings.describe 读远端配置）。
+    private var cachedHostModelProvider: String?
+    private var cachedHostModel: String?
+    private var cachedHostModelReasoningEffort: String?
+    /// agentPreset.list 返回的默认预设 ID。
+    private var cachedDefaultPreset: String?
     private lazy var redirectBlocker = DshDirectAuthService.RedirectBlocker()
     private lazy var httpSession: URLSession = makeHTTPSession()
     private lazy var socketSession: URLSession = makeHTTPSession()
@@ -618,8 +624,11 @@ final class DshDirectClient: GatewayClient {
     }
 
     override func requestAgentPresets() {
-        runRPC(method: "agentPreset.list", payload: .object([:]), requestType: "agent-presets") {
-            DirectFrameTranslator.agentPresetsFrame(from: $0)
+        runRPC(method: "agentPreset.list", payload: .object([:]), requestType: "agent-presets") { value in
+            if let defaultId = (value["presets"]?.arrayValue ?? []).first(where: { $0["isDefault"]?.boolValue == true })?["id"]?.stringValue {
+                self.cachedDefaultPreset = defaultId
+            }
+            return DirectFrameTranslator.agentPresetsFrame(from: value)
         }
     }
 
@@ -630,7 +639,7 @@ final class DshDirectClient: GatewayClient {
     }
 
     override func setPermission(sessionId: String, name: String) {
-        emit(DirectFrameTranslator.errorFrame(code: "unsupported", message: "直连模式暂不支持切换权限预设，请前往 WebUI 操作。", requestType: "permission", sessionId: sessionId))
+        emit(DirectFrameTranslator.errorFrame(code: "info", message: "直连模式暂不支持切换权限预设，请前往 WebUI 操作。", requestType: "permission", sessionId: sessionId))
     }
 
     override func requestContextUsage(sessionId: String) {
@@ -641,48 +650,35 @@ final class DshDirectClient: GatewayClient {
         emit(GatewayFrame(kind: "session-stats", sessionId: sessionId))
     }
 
+    /// 默认预设走 agentPreset.list 的 isDefault 字段，权限默认值在无公开 API 时
+    /// 回退为 "ask"（与部署默认值一致）。
     override func requestDefaults() {
-        emitSettingsSnapshot()
+        emit(GatewayFrame(
+            kind: "defaults",
+            agentPresetDefault: cachedDefaultPreset,
+            permissionDefault: "ask"
+        ))
     }
 
+    /// 默认模型走 host.describe 在连接时就已缓存好的 provider/model（与 DSH
+    /// 部署运行时一致），无需 settings.describe（此方法在 DSH 中仅限 loopback，
+    /// 远程域名调用会返回 HTTP 403）。
     override func requestDefaultModel() {
-        emitSettingsSnapshot()
-    }
-
-    /// 读 settings.describe，把 agent-default-model/agent-presets/permission 翻译为
-    /// defaults + default-model 帧注入 AppStore。所有三个命名空间一次 RPC 拉完。
-    private func emitSettingsSnapshot() {
-        Task {
-            do {
-                let describe = try await self.call("settings.describe", .object([:]))
-                let namespaces = describe["namespaces"]?.arrayValue ?? []
-                let agentPresets = namespaceValue(namespaces, ns: "agent-presets")
-                let permission = namespaceValue(namespaces, ns: "permission")
-                let defaultModel = namespaceValue(namespaces, ns: "agent-default-model")
-
-                if let defaultPreset = agentPresets?["default"]?.stringValue {
-                    cacheSettingsRevision("agent-presets", from: namespaces)
-                    emit(GatewayFrame(kind: "defaults", agentPresetDefault: defaultPreset, permissionDefault: permission?["defaultPreset"]?.stringValue))
-                }
-                if let provider = defaultModel?["provider"]?.stringValue,
-                   let model = defaultModel?["model"]?.stringValue {
-                    cacheSettingsRevision("agent-default-model", from: namespaces)
-                    emit(GatewayFrame(kind: "default-model", selection: GatewayModelSelection(
-                        provider: provider,
-                        model: model,
-                        reasoningEffort: defaultModel?["reasoningEffort"]?.stringValue
-                    )))
-                }
-            } catch {
-                emit(DirectFrameTranslator.errorFrame(code: "transport", message: "读取远端设置失败：\(error.localizedDescription)", requestType: "defaults"))
-            }
+        if let provider = cachedHostModelProvider, let model = cachedHostModel {
+            emit(GatewayFrame(kind: "default-model", selection: GatewayModelSelection(
+                provider: provider,
+                model: model,
+                reasoningEffort: cachedHostModelReasoningEffort
+            )))
         }
     }
 
+    /// 修改默认模型——调 DSH 的 settings.replace 写入 agent-default-model 命名空间。
+    /// 此方法在 DSH 中属于 PRIVILEGED_METHODS（仅限 loopback），远程域名会返回 403。
     override func saveDefaultModel(provider: String, model: String, reasoningEffort: String?) {
         var section: [String: JSONValue] = ["provider": .string(provider), "model": .string(model)]
         if let effort = reasoningEffort { section["reasoningEffort"] = .string(effort) }
-        writeSetting(ns: "agent-default-model", section: .object(section), requestType: "save-default-model") { value in
+        writeDefaultSetting(ns: "agent-default-model", section: .object(section), requestType: "save-default-model") { value in
             GatewayFrame(kind: "save-default-model", saved: GatewayModelSelection(
                 provider: value["provider"]?.stringValue ?? provider,
                 model: value["model"]?.stringValue ?? model,
@@ -691,35 +687,22 @@ final class DshDirectClient: GatewayClient {
         }
     }
 
+    /// 修改默认预设/权限——调 DSH 的 settings.replace。同属于 PRIVILEGED_METHODS。
     override func setDefault(target: String, value: String) {
-        let (ns, section): (String, JSONValue) = {
-            switch target {
-            case "agent-preset": return ("agent-presets", .object(["default": .string(value)]))
-            case "permission": return ("permission", .object(["defaultPreset": .string(value)]))
-            default: return (target, .object([:]))
-            }
-        }()
-        writeSetting(ns: ns, section: section, requestType: "set-default") { _ in
+        let ns: String
+        let section: JSONValue
+        switch target {
+        case "agent-preset": ns = "agent-presets"; section = .object(["default": .string(value)])
+        case "permission": ns = "permission"; section = .object(["defaultPreset": .string(value)])
+        default: ns = target; section = .object([:])
+        }
+        writeDefaultSetting(ns: ns, section: section, requestType: "set-default") { _ in
             GatewayFrame(kind: "set-default", target: target, value: value, applied: true)
         }
     }
 
-    // MARK: - settings.describe / settings.replace 实现
-
-    private var settingsRevisions: [String: Int] = [:]
-
-    private func namespaceValue(_ namespaces: [JSONValue], ns: String) -> JSONValue? {
-        namespaces.first { $0["ns"]?.stringValue == ns }?["value"]
-    }
-
-    private func cacheSettingsRevision(_ ns: String, from namespaces: [JSONValue]) {
-        if let entry = namespaces.first(where: { $0["ns"]?.stringValue == ns }),
-           let rev = entry["revision"]?.doubleValue {
-            settingsRevisions[ns] = Int(rev)
-        }
-    }
-
-    private func writeSetting(
+    /// settings.replace 写入（403 时给出明确指引：仅 loopback 可用）。
+    private func writeDefaultSetting(
         ns: String,
         section: JSONValue,
         requestType: String,
@@ -727,21 +710,37 @@ final class DshDirectClient: GatewayClient {
     ) {
         Task {
             do {
-                let rev = settingsRevisions[ns] ?? 0
                 let result = try await self.call("settings.replace", .object([
                     "ns": .string(ns),
                     "section": section,
-                    "expectedRevision": .number(Double(rev))
+                    "expectedRevision": .number(0)
                 ]))
-                if let newRev = result["revision"]?.doubleValue {
-                    settingsRevisions[ns] = Int(newRev)
+                emit(frame(result["value"] ?? section))
+                // 写入成功后刷新上游缓存以确保设置页立即同步。
+                if ns == "agent-default-model" || ns == "agent-presets" || ns == "permission" {
+                    if ns == "agent-default-model" {
+                        // 回刷 host.describe 和 agentPreset.list。
+                        requestHost()
+                        requestAgentPresets()
+                    } else {
+                        requestAgentPresets()
+                    }
                 }
-                let applied = result["value"] ?? section
-                emit(frame(applied))
             } catch let error as RPCBusinessError {
                 emit(DirectFrameTranslator.errorFrame(code: error.code, message: error.message, requestType: requestType))
             } catch {
-                emit(DirectFrameTranslator.errorFrame(code: "transport", message: "修改远端设置失败：\(error.localizedDescription)", requestType: requestType))
+                let isPrivileged403 = (error as NSError).code == 403
+                    || error.localizedDescription.contains("403")
+                    || error.localizedDescription.contains("forbidden")
+                if isPrivileged403 {
+                    emit(DirectFrameTranslator.errorFrame(
+                        code: "info",
+                        message: "修改默认配置需要本机 loopback 连接（127.0.0.1），远程域名因 DSH 安全限制暂不支持。请前往 WebUI 操作。",
+                        requestType: requestType
+                    ))
+                } else {
+                    emit(DirectFrameTranslator.errorFrame(code: "transport", message: "修改默认配置失败：\(error.localizedDescription)", requestType: requestType))
+                }
             }
         }
     }
@@ -813,6 +812,8 @@ final class DshDirectClient: GatewayClient {
             guard generation == connectGeneration else { return }
             let description = try await call("host.describe", .object([:]))
             guard generation == connectGeneration else { return }
+            cachedHostModelProvider = description["provider"]?.stringValue
+            cachedHostModel = description["model"]?.stringValue
             reconnectAttempt = 0
             isRecoveringFromBackground = false
             updateState(.connected)
