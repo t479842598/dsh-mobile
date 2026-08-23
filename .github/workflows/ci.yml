@@ -9,19 +9,12 @@ on:
 
 jobs:
   build:
-    name: Build & Test
-    runs-on: macos-latest
-    strategy:
-      matrix:
-        destination:
-          - 'generic/platform=iOS Simulator'
+    name: Build & Test (Simulator)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 26
-        run: sudo xcode-select -s /Applications/Xcode.app
-
-      - name: Build (Simulator)
+      - name: Build
         run: |
           xcodebuild \
             -project DeepSeekHarnessMobile.xcodeproj \
@@ -31,7 +24,7 @@ jobs:
             -quiet \
             build
 
-      - name: Run Unit Tests
+      - name: Unit Tests
         run: |
           xcodebuild \
             -project DeepSeekHarnessMobile.xcodeproj \
@@ -41,24 +34,20 @@ jobs:
             test \
             2>&1 | tee test-output.log
 
-      - name: Summarize test results
+      - name: Test Summary
         if: always()
         run: grep -E "Test Suite.*passed|Test Suite.*failed|Executed.*tests|TEST SUCCEEDED|TEST FAILED" test-output.log || true
 
   release:
-    name: Create Release
+    name: Release IPA
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: macos-latest
+    runs-on: macos-15
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select Xcode 26
-        run: sudo xcode-select -s /Applications/Xcode.app
-
-      - name: Build (Unsigned Archive)
+      - name: Build Archive
         run: |
           xcodebuild \
             -project DeepSeekHarnessMobile.xcodeproj \
@@ -71,14 +60,14 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             archive
 
-      - name: Package .ipa
+      - name: Package IPA
         run: |
           mkdir -p Payload
           cp -R ./build/DshMobile.xcarchive/Products/Applications/DshMobile.app Payload/
           zip -r DshMobile.ipa Payload
           rm -rf Payload
 
-      - name: Create GitHub Release
+      - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           files: DshMobile.ipa
