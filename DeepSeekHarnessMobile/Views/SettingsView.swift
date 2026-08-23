@@ -4,31 +4,6 @@ struct SettingsView: View {
     @EnvironmentObject private var store: AppStore
     @State private var pendingPermission: DefaultPermissionChoice?
 
-    private var bridgeSection: some View {
-        Section("移动桥接") {
-            TextField("ws://host:3080/ws/mobile", text: $store.endpoint)
-                .textInputAutocapitalization(.never)
-                .keyboardType(.URL)
-                .autocorrectionDisabled()
-            HStack {
-                ConnectionDot(state: store.gateway.state)
-                Text(store.gateway.state.label)
-                Spacer()
-                if let port = store.gateway.serverPort {
-                    Text("Port \(port)").foregroundStyle(.secondary)
-                }
-            }
-            Button(store.gateway.state.isConnected ? "断开连接" : "连接") {
-                if store.gateway.state.isConnected {
-                    store.gateway.disconnect()
-                } else {
-                    store.connect()
-                }
-            }
-            Button("Ping 网关") { store.gateway.ping() }
-        }
-    }
-
     private var selectedPresetName: String {
         guard let id = store.agentPresetDefault else { return "未读取" }
         return store.agentPresets.first(where: { $0.id == id })?.displayName ?? id
@@ -130,18 +105,6 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker("连接方式", selection: $store.connectionMode) {
-                    ForEach(ConnectionMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-            } footer: {
-                Text(store.connectionMode.footerText)
-            }
-
-            if store.connectionMode == .bridge {
-                bridgeSection
-            } else {
                 DirectConnectSection()
             }
 

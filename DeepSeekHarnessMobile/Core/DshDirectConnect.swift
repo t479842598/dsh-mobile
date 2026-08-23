@@ -512,6 +512,9 @@ final class DshDirectClient: GatewayClient {
     override func applicationDidBecomeActive() {
         isApplicationInBackground = false
         guard wantsConnection, state != .connected, httpBaseURL != nil else { return }
+        // 递增代际：使所有在后台残留的接收/重连任务静默退出，
+        // 避免旧代失败调度新重连与新连接产生竞态（连接⇄失败来回跳的根因）。
+        connectGeneration &+= 1
         reconnectTask?.cancel()
         reconnectTask = nil
         let generation = connectGeneration
@@ -639,19 +642,108 @@ final class DshDirectClient: GatewayClient {
     }
 
     override func requestDefaults() {
-        emit(GatewayFrame(kind: "defaults"))
+        emitSettingsSnapshot()
     }
 
     override func requestDefaultModel() {
-        emit(GatewayFrame(kind: "default-model"))
+        emitSettingsSnapshot()
+    }
+
+    /// 读 settings.describe，把 agent-default-model/agent-presets/permission 翻译为
+    /// defaults + default-model 帧注入 AppStore。所有三个命名空间一次 RPC 拉完。
+    private func emitSettingsSnapshot() {
+        Task {
+            do {
+                let describe = try await self.call("settings.describe", .object([:]))
+                let namespaces = describe["namespaces"]?.arrayValue ?? []
+                let agentPresets = namespaceValue(namespaces, ns: "agent-presets")
+                let permission = namespaceValue(namespaces, ns: "permission")
+                let defaultModel = namespaceValue(namespaces, ns: "agent-default-model")
+
+                if let defaultPreset = agentPresets?["default"]?.stringValue {
+                    cacheSettingsRevision("agent-presets", from: namespaces)
+                    emit(GatewayFrame(kind: "defaults", agentPresetDefault: defaultPreset, permissionDefault: permission?["defaultPreset"]?.stringValue))
+                }
+                if let provider = defaultModel?["provider"]?.stringValue,
+                   let model = defaultModel?["model"]?.stringValue {
+                    cacheSettingsRevision("agent-default-model", from: namespaces)
+                    emit(GatewayFrame(kind: "default-model", selection: GatewayModelSelection(
+                        provider: provider,
+                        model: model,
+                        reasoningEffort: defaultModel?["reasoningEffort"]?.stringValue
+                    )))
+                }
+            } catch {
+                emit(DirectFrameTranslator.errorFrame(code: "transport", message: "读取远端设置失败：\(error.localizedDescription)", requestType: "defaults"))
+            }
+        }
     }
 
     override func saveDefaultModel(provider: String, model: String, reasoningEffort: String?) {
-        emit(DirectFrameTranslator.errorFrame(code: "info", message: "直连模式暂不支持修改默认模型，请前往 WebUI 设置。", requestType: "save-default-model"))
+        var section: [String: JSONValue] = ["provider": .string(provider), "model": .string(model)]
+        if let effort = reasoningEffort { section["reasoningEffort"] = .string(effort) }
+        writeSetting(ns: "agent-default-model", section: .object(section), requestType: "save-default-model") { value in
+            GatewayFrame(kind: "save-default-model", saved: GatewayModelSelection(
+                provider: value["provider"]?.stringValue ?? provider,
+                model: value["model"]?.stringValue ?? model,
+                reasoningEffort: value["reasoningEffort"]?.stringValue ?? reasoningEffort
+            ))
+        }
     }
 
     override func setDefault(target: String, value: String) {
-        emit(DirectFrameTranslator.errorFrame(code: "info", message: "直连模式暂不支持修改部署默认配置，请前往 WebUI 设置。", requestType: "set-default", target: target, value: value))
+        let (ns, section): (String, JSONValue) = {
+            switch target {
+            case "agent-preset": return ("agent-presets", .object(["default": .string(value)]))
+            case "permission": return ("permission", .object(["defaultPreset": .string(value)]))
+            default: return (target, .object([:]))
+            }
+        }()
+        writeSetting(ns: ns, section: section, requestType: "set-default") { _ in
+            GatewayFrame(kind: "set-default", target: target, value: value, applied: true)
+        }
+    }
+
+    // MARK: - settings.describe / settings.replace 实现
+
+    private var settingsRevisions: [String: Int] = [:]
+
+    private func namespaceValue(_ namespaces: [JSONValue], ns: String) -> JSONValue? {
+        namespaces.first { $0["ns"]?.stringValue == ns }?["value"]
+    }
+
+    private func cacheSettingsRevision(_ ns: String, from namespaces: [JSONValue]) {
+        if let entry = namespaces.first(where: { $0["ns"]?.stringValue == ns }),
+           let rev = entry["revision"]?.doubleValue {
+            settingsRevisions[ns] = Int(rev)
+        }
+    }
+
+    private func writeSetting(
+        ns: String,
+        section: JSONValue,
+        requestType: String,
+        frame: @escaping (JSONValue) -> GatewayFrame
+    ) {
+        Task {
+            do {
+                let rev = settingsRevisions[ns] ?? 0
+                let result = try await self.call("settings.replace", .object([
+                    "ns": .string(ns),
+                    "section": section,
+                    "expectedRevision": .number(Double(rev))
+                ]))
+                if let newRev = result["revision"]?.doubleValue {
+                    settingsRevisions[ns] = Int(newRev)
+                }
+                let applied = result["value"] ?? section
+                emit(frame(applied))
+            } catch let error as RPCBusinessError {
+                emit(DirectFrameTranslator.errorFrame(code: error.code, message: error.message, requestType: requestType))
+            } catch {
+                emit(DirectFrameTranslator.errorFrame(code: "transport", message: "修改远端设置失败：\(error.localizedDescription)", requestType: requestType))
+            }
+        }
     }
 
     override func requestProviders() {
@@ -819,10 +911,15 @@ final class DshDirectClient: GatewayClient {
             socket.maximumMessageSize = Self.maximumIncomingMessageSize
             if isMux {
                 muxSocket = socket
-                muxReceiveTask = Task { [weak self] in await self?.receiveLoop(socket, isMux: true, generation: generation) }
+                // ⚠️ 不要用 Task { await self?.receiveLoop(...) }——那样会把整个
+                // 接收循环钉在主 actor 上，流式对话时每秒数百个事件会把主线程塞满，
+                // 导致 UI 4-5 秒才刷新一批。
+                let weakSelf = self as DshDirectClient?
+                muxReceiveTask = Task.detached { [weakSelf] in await weakSelf?.receiveLoop(socket, isMux: true, generation: generation) }
             } else {
                 hostSocket = socket
-                hostReceiveTask = Task { [weak self] in await self?.receiveLoop(socket, isMux: false, generation: generation) }
+                let weakSelf = self as DshDirectClient?
+                hostReceiveTask = Task.detached { [weakSelf] in await weakSelf?.receiveLoop(socket, isMux: false, generation: generation) }
             }
             socket.resume()
         }
@@ -861,49 +958,70 @@ final class DshDirectClient: GatewayClient {
         }
     }
 
-    private func receiveLoop(_ socket: URLSessionWebSocketTask, isMux: Bool, generation: Int) async {
+    /// 事件接收循环。不继承主 actor——在 Task.detached 里跑，确保
+    /// JSON 解码与事件归一化的开销不阻塞主线程（流式对话每秒数百 chunk）。
+    private nonisolated func receiveLoop(_ socket: URLSessionWebSocketTask, isMux: Bool, generation: Int) async {
         do {
             while !Task.isCancelled {
                 let message = try await socket.receive()
-                guard generation == connectGeneration else { return }
                 let data: Data
                 switch message {
                 case .string(let text): data = Data(text.utf8)
                 case .data(let payload): data = payload
                 @unknown default: continue
                 }
-                ingestEnvelope(data)
+                // JSON 解码在后台做，减少主线程压力。
+                guard let envelope = try? JSONDecoder().decode(JSONValue.self, from: data),
+                      envelope["type"]?.stringValue == "server-request",
+                      let rpcId = envelope["rpcId"]?.stringValue,
+                      let payload = envelope["payload"] else { continue }
+                let method = envelope["method"]?.stringValue ?? payload["type"]?.stringValue ?? ""
+                // 非 session/event 帧量极少，session/event 帧才是瓶颈。
+                // 把归一化（RawSessionEvent.normalized）也留在后台线程做。
+                if method == "session/event" {
+                    guard let sessionId = payload["sessionId"]?.stringValue,
+                          let event = payload["event"] else { continue }
+                    let raw = RawSessionEvent(
+                        type: event["type"]?.stringValue ?? "unknown",
+                        seq: event["seq"]?.doubleValue.map(Int.init) ?? 0,
+                        time: event["time"]?.doubleValue ?? 0,
+                        data: event["data"] ?? .null
+                    )
+                    let normalized = raw.normalized(sessionId: sessionId)
+                    await emitOnMain(GatewayFrame(
+                        kind: "event", sessionId: sessionId,
+                        seq: raw.seq, time: raw.time,
+                        event: normalized.event
+                    ))
+                } else {
+                    await processNonEventEnvelope(method: method, rpcId: rpcId, payload: payload)
+                }
             }
         } catch is CancellationError {
             return
         } catch {
-            handleStreamFailure(error, generation: generation)
+            await handleStreamFailureOnMain(error, generation: generation)
         }
     }
 
+    @MainActor
+    private func emitOnMain(_ frame: GatewayFrame) { emit(frame) }
+
+    @MainActor
+    private func processNonEventEnvelope(method: String, rpcId: String, payload: JSONValue) {
+        ingestEnvelopePayload(method: method, rpcId: rpcId, payload: payload)
+    }
+
+    @MainActor
+    private func handleStreamFailureOnMain(_ error: Error, generation: Int) {
+        handleStreamFailure(error, generation: generation)
+    }
+
     /// 解析 server-request 信封并派发到对应翻译器。
-    private func ingestEnvelope(_ data: Data) {
-        guard let envelope = try? JSONDecoder().decode(JSONValue.self, from: data),
-              envelope["type"]?.stringValue == "server-request",
-              let rpcId = envelope["rpcId"]?.stringValue,
-              let payload = envelope["payload"] else { return }
-        switch envelope["method"]?.stringValue ?? payload["type"]?.stringValue {
-        case "session/event":
-            guard let sessionId = payload["sessionId"]?.stringValue,
-                  let event = payload["event"] else { return }
-            let raw = RawSessionEvent(
-                type: event["type"]?.stringValue ?? "unknown",
-                seq: event["seq"]?.doubleValue.map(Int.init) ?? 0,
-                time: event["time"]?.doubleValue ?? 0,
-                data: event["data"] ?? .null
-            )
-            emit(GatewayFrame(
-                kind: "event",
-                sessionId: sessionId,
-                seq: raw.seq,
-                time: raw.time,
-                event: raw.normalized(sessionId: sessionId).event
-            ))
+    /// 仅运行在 @MainActor 上——JSON 解码与 session/event 归一化已在 receiveLoop（后台）完成。
+    /// 此函数仅处理非 session/event 的控制帧（提问、审批、host 流等少量帧）。
+    private func ingestEnvelopePayload(method: String, rpcId: String, payload: JSONValue) {
+        switch method {
         case "question/requested":
             if let frame = DirectFrameTranslator.questionRequestedFrame(rpcId: rpcId, payload: payload) {
                 emit(frame)
@@ -1132,6 +1250,7 @@ final class DshDirectClient: GatewayClient {
     private func handleStreamFailure(_ error: Error, generation: Int) {
         guard wantsConnection, generation == connectGeneration else { return }
         if isCancellation(error) { return }
+        if state.isConnected { return }  // 已有健康连接，旧流失败不触发重连
         if isUnauthorized(error) {
             Task {
                 if await self.reauthenticate() {
@@ -1145,6 +1264,9 @@ final class DshDirectClient: GatewayClient {
     }
 
     private func handleEstablishmentFailure(_ error: Error) {
+        // 如果已有连接在运行（并发 establishConnection 的先到者已成功），
+        // 本失败方静默退出，不触发重连拆掉好连接。
+        if state.isConnected { return }
         if let authError = error as? DshDirectAuthService.AuthError {
             switch authError {
             case .invalidURL:

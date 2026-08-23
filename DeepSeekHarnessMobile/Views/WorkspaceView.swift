@@ -79,20 +79,8 @@ struct WorkspaceView: View {
 
     @ViewBuilder
     private var authenticationMenu: some View {
-        // 直连模式用账号密码登录，配对入口只在移动桥接模式下出现。
-        if store.connectionMode == .bridge {
-            GatewayAuthenticationMenu(
-                gateway: store.gateway,
-                onScan: {
-                    store.lastError = nil
-                    showsQRScanner = true
-                },
-                onManualEntry: {
-                    store.lastError = nil
-                    showsManualPairing = true
-                }
-            )
-        }
+        // 配对入口已移除——App 仅支持直连网页端模式。
+        EmptyView()
     }
 
     @ViewBuilder

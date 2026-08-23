@@ -1,29 +1,6 @@
 import SwiftUI
 import UIKit
 
-/// 连接方式：移动桥接（dsh-plugin-mobile-gateway/bridge，扫码配对）
-/// 或直连网页端（DSH 原生协议 + dsh-passwords 账号密码，支持远程域名）。
-enum ConnectionMode: String, CaseIterable, Identifiable {
-    case bridge
-    case direct
-
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .bridge: "移动桥接"
-        case .direct: "直连网页端"
-        }
-    }
-    var footerText: String {
-        switch self {
-        case .bridge:
-            "通过 WebUI「移动设备」面板配对连接到 dsh-plugin-mobile-gateway / mobile-bridge 插件。"
-        case .direct:
-            "像浏览器一样直连 DeepSeek Harness 网页端（无需任何网关插件）。填部署地址（如 https://ds.example.com）与账号密码；未装密码门的局域网部署可只填地址。"
-        }
-    }
-}
-
 enum InterfaceStyle: String, CaseIterable, Identifiable {
     case system, light, dark
     var id: String { rawValue }
@@ -91,16 +68,8 @@ final class AppStore: ObservableObject {
     @Published private(set) var questionRequestStatuses: [String: GatewayQuestionRequestStatus] = [:]
     @Published private(set) var supportsImages = false
 
-    /// 当前传输实例。两种模式共用同一公开接口（DshDirectClient 继承 GatewayClient），
-    /// 切换模式时整体替换，所有既有调用点无需感知。
-    @Published private(set) var gateway: GatewayClient
-    @Published var connectionMode: ConnectionMode {
-        didSet {
-            guard oldValue != connectionMode else { return }
-            UserDefaults.standard.set(connectionMode.rawValue, forKey: "connection.mode")
-            activateTransport(for: connectionMode)
-        }
-    }
+    /// 直连传输实例。继承 GatewayClient 复用公开接口与视图绑定。
+    @Published private(set) var gateway: DshDirectClient
     @Published var directBaseURL: String {
         didSet { UserDefaults.standard.set(directBaseURL, forKey: "direct.baseURL") }
     }
@@ -110,9 +79,6 @@ final class AppStore: ObservableObject {
     @Published var directRememberPassword: Bool {
         didSet { UserDefaults.standard.set(directRememberPassword, forKey: "direct.rememberPassword") }
     }
-
-    private let bridgeClient: GatewayClient
-    private let directClient: DshDirectClient
     private var pendingHistorySessionId: String?
     private var historyRequestTokens: [String: UUID] = [:]
     private var historyPaginationCursors: [String: Set<Int>] = [:]
@@ -173,41 +139,15 @@ final class AppStore: ObservableObject {
         endpoint = UserDefaults.standard.string(forKey: "gateway.endpoint") ?? "ws://127.0.0.1:3080/ws/mobile"
         if let data = UserDefaults.standard.data(forKey: "gateway.sessions"),
            let decoded = try? JSONDecoder().decode([SessionSummary].self, from: data) { sessions = decoded }
-        let savedMode = ConnectionMode(rawValue: UserDefaults.standard.string(forKey: "connection.mode") ?? "") ?? .direct
-        connectionMode = savedMode
         directBaseURL = UserDefaults.standard.string(forKey: "direct.baseURL") ?? ""
         directUsername = UserDefaults.standard.string(forKey: "direct.username") ?? ""
         directRememberPassword = UserDefaults.standard.object(forKey: "direct.rememberPassword") as? Bool ?? true
-        let bridge = GatewayClient()
-        let direct = DshDirectClient()
-        bridgeClient = bridge
-        directClient = direct
-        gateway = (savedMode == .direct) ? direct : bridge
-        wireTransportCallbacks()
-    }
-
-    private func wireTransportCallbacks() {
+        let client = DshDirectClient()
+        gateway = client
         gateway.onFrame = { [weak self] frame in self?.handle(frame) }
         gateway.onConnectionFailure = { [weak self] detail in
             self?.handleConnectionFailure(detail)
         }
-    }
-
-    /// 切换连接模式：断开旧传输、换上新实例并重接回调。
-    private func activateTransport(for mode: ConnectionMode) {
-        gateway.disconnect()
-        resetOutstandingRequests()
-        pendingQuestionRequests.removeAll()
-        questionRequestStatuses.removeAll()
-        events.removeAll()
-        renderedConversationItems.removeAll()
-        conversationContentSessionIds.removeAll()
-        selectedSessionId = nil
-        hostSnapshot = nil
-        workspaces = []
-        sessions.removeAll()
-        gateway = (mode == .direct) ? directClient : bridgeClient
-        wireTransportCallbacks()
     }
 
     var selectedEvents: [SessionEvent] {
@@ -269,12 +209,7 @@ final class AppStore: ObservableObject {
         resetOutstandingRequests()
         presentsNextConnectionFailureAsAlert = true
         lastError = nil
-        switch connectionMode {
-        case .bridge:
-            gateway.connect(to: endpoint)
-        case .direct:
-            connectDirect()
-        }
+        connectDirect()
     }
 
     /// 设置页直连入口：先按表单落凭据，再走统一 connect 流程。
@@ -293,7 +228,7 @@ final class AppStore: ObservableObject {
             credentials.password = nil
         }
         DshDirectCredentialStore.saveQuietly(credentials, baseURL: base)
-        directClient.transientPassword = directRememberPassword ? nil : (password.isEmpty ? nil : password)
+        gateway.transientPassword = directRememberPassword ? nil : (password.isEmpty ? nil : password)
         gateway.connect(to: base.absoluteString)
     }
 
@@ -337,9 +272,6 @@ final class AppStore: ObservableObject {
     }
 
     func pair(usingQRCode rawValue: String, presentsFailureAlert: Bool = true) throws {
-        guard connectionMode == .bridge else {
-            throw PairingPayloadError.unsupportedMode
-        }
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let data = Self.decodeStrictBase64URL(trimmed) else {
             throw PairingPayloadError.invalidBase64URL
@@ -1532,7 +1464,6 @@ private enum PairingPayloadError: LocalizedError {
     case invalidEndpoint
     case invalidCode
     case expired
-    case unsupportedMode
 
     var errorDescription: String? {
         switch self {
@@ -1548,8 +1479,6 @@ private enum PairingPayloadError: LocalizedError {
             "二维码中的一次性 pairingCode 无效。"
         case .expired:
             "二维码配对码已经过期，请在 WebUI 中重新生成。"
-        case .unsupportedMode:
-            "扫码配对仅在移动桥接模式下可用，请先在设置中切换连接方式。"
         }
     }
 }
