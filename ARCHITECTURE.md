@@ -2,10 +2,15 @@
 
 ## 1. 项目概述
 
-`DeepSeekHarnessMobile` 是一个原生 SwiftUI iOS 客户端，用于连接 `dsh-plugin-mobile-gateway`（DeepSeek Harness 的移动端网关插件）。App 通过 WebSocket 协议与运行在开发机/服务器上的 Harness Host 通信，实现工作区管理、会话列表、实时对话流、Agent 执行轨迹（Trajectory）查看以及部署级设置管理。
+`DeepSeekHarnessMobile` 是一个原生 SwiftUI iOS 客户端，用于连接 DeepSeek Harness。App 支持两种连接方式：
+
+- **移动桥接**：通过 `dsh-plugin-mobile-gateway` / `dsh-plugin-mobile-bridge` 插件的私有协议（`ws://<host>:3080/ws/mobile`，扫码/Token 配对）连接。
+- **直连网页端**：不依赖任何网关插件，像浏览器一样直连 DSH 网页端——带 `dsh-passwords` 密码门的部署用账号密码换取会话 Cookie，之后走 DSH 原生协议（RPC `POST /api/*` + `/api/events.mux`、`/api/events.host` 两条下行 WebSocket + `/api/respond` 应答），本地与远程域名均可。
+
+两种传输共享同一套帧驱动的状态层与视图（`GatewayFrame` → `AppStore.handle`），切换模式只替换传输实例。
 
 - 平台：iOS（SwiftUI + UIKit 互操作），要求 iOS 26 的 Liquid Glass 效果有专门的降级路径以兼容旧系统。
-- 通信协议：单一 WebSocket 连接（默认 `ws://<host>:3080/ws/mobile`），JSON 帧双向通信。
+- 通信协议：桥接为单一 WebSocket（默认 `ws://<host>:3080/ws/mobile`），JSON 帧双向通信；直连为 HTTP RPC + 两条仅下行 WebSocket（协议细节见 `Docs/exploration.md` 与 `Core/DshDirectConnect.swift` 顶部注释）。
 - 定位：Harness 桌面 Web UI 的移动端"瘦客户端"，功能上是 Web UI 的三栏（工作区 / 对话+轨迹 / 设置）在移动端的原生映射，当前协议版本（v0.1.6+）尚未覆盖全部 Web UI 的写操作能力（见第 7 节）。
 
 ## 2. 技术栈
@@ -30,7 +35,8 @@ dsh-mobile/
 │   │   └── DeepSeekHarnessMobileApp.swift   # @main 入口，注入 AppStore
 │   ├── Core/
 │   │   ├── AppStore.swift        # 全局状态容器 + 业务逻辑（Store/ViewModel 角色）
-│   │   ├── GatewayClient.swift   # WebSocket 连接与帧收发
+│   │   ├── GatewayClient.swift   # 桥接：WebSocket 连接与帧收发（直连子类的基类）
+│   │   ├── DshDirectConnect.swift# 直连：账密登录/凭据、RPC、双下行 WS、原生协议→GatewayFrame 翻译
 │   │   ├── GatewayModels.swift   # 协议数据模型、JSONValue、事件归一化
 │   │   └── Theme.swift           # 配色、深海背景等主题元素
 │   ├── Components/
@@ -129,6 +135,16 @@ App 采用轻量的**单向数据流 + 集中式 Store** 模式（近似 MVVM，
 - `Glass.swift`：`glassSurface` ViewModifier，iOS 26+ 使用系统 Liquid Glass（`glassEffect`），更低版本降级为 `ultraThinMaterial` + 描边 + 阴影模拟；`ConnectionDot`（连接状态指示）、`HarnessMark`（品牌 Logo）。
 - `Theme.swift`：`DSHColor` 配色集合，`DeepOceanBackground`（程序化绘制的深海网格背景，用作首页视觉背景）。
 
+### 5.6 直连网页端（`Core/DshDirectConnect.swift`）
+
+直连模式继承 `GatewayClient` 保持公开接口不变（AppStore 与视图无需感知传输类型），内部完全自洽：
+
+- **认证**：`DshDirectAuthService` 先 `GET /gateway/login` 探测密码门（以是否下发 `dsh_csrf` Cookie 为准）；有门则 `POST /gateway/login` 表单登录换取 `dsh_gateway_token`（JWT，12h），账号/密码/Token 存 Keychain；无门（局域网裸部署）免鉴权。Token 过期（HTTP/WS 401）时用存储的账密自动重登一次。
+- **RPC**：`POST /api/<method>`，信封 `client-request`/`server-response`（rpcId 关联），30s 超时。
+- **事件流**：`/api/events.mux` 与 `/api/events.host` 两条仅下行 WebSocket（服务端对 GET 返回 426，SSE 不可用）；开流检测用 ping→pong；连接代际（generation）防重复 connect 竞态，过期代的失败静默丢弃。
+- **应答**：提问（question/requested）与审批（approval/requested，映射为“允许一次/本次拒绝”问题）经 `POST /api/respond` 应答，取消用 `error.code=cancelled`。
+- **翻译**：`DirectFrameTranslator` 把原生载荷映射为 AppStore 已消费的 GatewayFrame（workspaces/sessions/history/host/models/agent-presets/question-* 等）；`session.history` 的 `nextBeforeSeq` 由本页最小 seq 推导；不支持的方法（context-usage、session-stats、权限预设、部署默认值写操作）合成空成功帧或明确错误帧，UI 静默降级。
+
 ## 6. 数据流示例：发送一条消息
 
 1. `ConversationView` 调用 `store.send(text)`。
@@ -142,10 +158,13 @@ App 采用轻量的**单向数据流 + 集中式 Store** 模式（近似 MVVM，
 当前网关协议（v0.1.6 起）已支持：`workspaces`、`sessions`、分页 `history`、`search`、`host`、`directories`、`workspace-create`，以及模型/权限/上下文用量/会话统计等查询接口。
 
 尚未覆盖 Web UI 的写操作能力（后续演进方向）：
-- 会话取消、Approval 审批应答、Plan 审阅
-- 队列编辑（queue/steer 模式的精细控制）、附件上传
-- 会话重命名/Fork/归档
-- 鉴权的远程访问（当前为局域网直连 `ws://`，无认证层）
+- 会话取消、Approval 审批应答、Plan 审阅（直连模式已支持提问/审批应答与取消）
+- 队列编辑（queue/steer 模式的精细控制）、附件上传（直连模式支持会话内图片发送与加载）
+- 会话重命名/Fork/归档（直连模式支持重命名；Fork/归档待补）
+- 鉴权的远程访问（直连模式已支持：dsh-passwords 账密登录 + 公网域名 https/wss）
+- 桥接模式默认局域网直连 `ws://`，无认证层
+
+直连模式当前未覆盖的 WebUI 能力：部署默认配置写操作（默认 Agent/模型/权限）、权限预设切换、队列编辑、Fork/归档、子代理与会话导出等——对应 RPC 方法返回明确错误并提示前往 WebUI 操作，不崩溃。
 
 ## 8. 测试
 

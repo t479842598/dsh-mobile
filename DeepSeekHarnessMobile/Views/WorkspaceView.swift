@@ -79,17 +79,20 @@ struct WorkspaceView: View {
 
     @ViewBuilder
     private var authenticationMenu: some View {
-        GatewayAuthenticationMenu(
-            gateway: store.gateway,
-            onScan: {
-                store.lastError = nil
-                showsQRScanner = true
-            },
-            onManualEntry: {
-                store.lastError = nil
-                showsManualPairing = true
-            }
-        )
+        // 直连模式用账号密码登录，配对入口只在移动桥接模式下出现。
+        if store.connectionMode == .bridge {
+            GatewayAuthenticationMenu(
+                gateway: store.gateway,
+                onScan: {
+                    store.lastError = nil
+                    showsQRScanner = true
+                },
+                onManualEntry: {
+                    store.lastError = nil
+                    showsManualPairing = true
+                }
+            )
+        }
     }
 
     @ViewBuilder

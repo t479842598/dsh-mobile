@@ -4,6 +4,31 @@ struct SettingsView: View {
     @EnvironmentObject private var store: AppStore
     @State private var pendingPermission: DefaultPermissionChoice?
 
+    private var bridgeSection: some View {
+        Section("移动桥接") {
+            TextField("ws://host:3080/ws/mobile", text: $store.endpoint)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+                .autocorrectionDisabled()
+            HStack {
+                ConnectionDot(state: store.gateway.state)
+                Text(store.gateway.state.label)
+                Spacer()
+                if let port = store.gateway.serverPort {
+                    Text("Port \(port)").foregroundStyle(.secondary)
+                }
+            }
+            Button(store.gateway.state.isConnected ? "断开连接" : "连接") {
+                if store.gateway.state.isConnected {
+                    store.gateway.disconnect()
+                } else {
+                    store.connect()
+                }
+            }
+            Button("Ping 网关") { store.gateway.ping() }
+        }
+    }
+
     private var selectedPresetName: String {
         guard let id = store.agentPresetDefault else { return "未读取" }
         return store.agentPresets.first(where: { $0.id == id })?.displayName ?? id
@@ -104,27 +129,20 @@ struct SettingsView: View {
                 Text("与 WebUI 使用同一份部署级设置。修改只影响之后新建的会话，运行中的会话保持启动时的配置。")
             }
 
-            Section("Mobile Gateway") {
-                TextField("ws://host:3080/ws/mobile", text: $store.endpoint)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.URL)
-                    .autocorrectionDisabled()
-                HStack {
-                    ConnectionDot(state: store.gateway.state)
-                    Text(store.gateway.state.label)
-                    Spacer()
-                    if let port = store.gateway.serverPort {
-                        Text("Port \(port)").foregroundStyle(.secondary)
+            Section {
+                Picker("连接方式", selection: $store.connectionMode) {
+                    ForEach(ConnectionMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
                     }
                 }
-                Button(store.gateway.state.isConnected ? "断开连接" : "连接") {
-                    if store.gateway.state.isConnected {
-                        store.gateway.disconnect()
-                    } else {
-                        store.connect()
-                    }
-                }
-                Button("Ping 网关") { store.gateway.ping() }
+            } footer: {
+                Text(store.connectionMode.footerText)
+            }
+
+            if store.connectionMode == .bridge {
+                bridgeSection
+            } else {
+                DirectConnectSection()
             }
 
             if let host = store.hostSnapshot {
@@ -561,5 +579,67 @@ private struct DefaultModelCard: View {
                 .stroke(isSelected ? Color.primary : Color.secondary.opacity(0.18), lineWidth: isSelected ? 1.5 : 1)
         }
         .opacity(isBusy ? 0.7 : 1)
+    }
+}
+
+/// 直连网页端的配置与登录表单。
+private struct DirectConnectSection: View {
+    @EnvironmentObject private var store: AppStore
+    @State private var password = ""
+
+    var body: some View {
+        Section {
+            TextField("https://ds.example.com", text: $store.directBaseURL)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+                .autocorrectionDisabled()
+            TextField("账号", text: $store.directUsername)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            SecureField(passwordPlaceholder, text: $password)
+            Toggle("记住密码", isOn: $store.directRememberPassword)
+            HStack {
+                ConnectionDot(state: store.gateway.state)
+                Text(store.gateway.state.label)
+                Spacer()
+            }
+            Button(store.gateway.state.isConnected ? "断开连接" : "登录并连接") {
+                if store.gateway.state.isConnected {
+                    store.gateway.disconnect()
+                } else {
+                    store.connectDirect(password: password)
+                    if store.directRememberPassword { password = "" }
+                }
+            }
+            .disabled(!connectButtonEnabled)
+            if store.directHasStoredCredentials || !store.directUsername.isEmpty {
+                Button(role: .destructive) {
+                    password = ""
+                    store.disconnectDirectAndForgetCredentials()
+                } label: {
+                    Text("清除该部署的账号与凭据")
+                }
+            }
+        } header: {
+            Text("直连网页端")
+        } footer: {
+            Text(directFooterText)
+        }
+    }
+
+    private var connectButtonEnabled: Bool {
+        !store.directBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (!store.directUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.directHasStoredCredentials)
+    }
+
+    private var passwordPlaceholder: String {
+        store.hasStoredDirectPassword ? "密码已保存（输入可覆盖）" : "密码"
+    }
+
+    private var directFooterText: String {
+        if store.directHasStoredCredentials {
+            return "已有保存的登录凭据，连接时会自动续期；密码留空即使用已存凭据。公网域名走 https/wss 并经 dsh-passwords 密码门登录。"
+        }
+        return "填 DSH 部署地址（如 https://ds.example.com 或 http://192.168.x.x:3080）。带 dsh-passwords 密码门的部署需填写账号密码；局域网裸部署可只填地址免登录。"
     }
 }

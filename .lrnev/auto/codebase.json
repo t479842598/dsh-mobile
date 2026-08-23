@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-23T08:35:37.300Z",
+  "analyzer": "AutoAnalyzer",
+  "project_root": "/Volumes/1T 原装/项目研发/dsh-mobile",
+  "tech_stack": [],
+  "primary_language": "unknown",
+  "package_managers": [],
+  "dependencies": {},
+  "directories": [
+    {
+      "path": "DeepSeekHarnessMobile",
+      "kind": "other"
+    },
+    {
+      "path": "DeepSeekHarnessMobile.xcodeproj",
+      "kind": "other"
+    },
+    {
+      "path": "DeepSeekHarnessMobileTests",
+      "kind": "other"
+    },
+    {
+      "path": "Design",
+      "kind": "other"
+    },
+    {
+      "path": "Docs",
+      "kind": "other"
+    },
+    {
+      "path": "scripts",
+      "kind": "config"
+    },
+    {
+      "path": "Vendor",
+      "kind": "other"
+    }
+  ],
+  "root_files": [
+    ".gitignore",
+    "ARCHITECTURE.md",
+    "README.md"
+  ],
+  "sample_files": [],
+  "notes": [
+    "该分析不调用 LLM / embedding，只做确定性文件探测。",
+    "请 AI 抽样阅读 sample_files 后补充 coding_style / architecture_notes 字段。",
+    "未确定性识别技术栈（非 JS/Py/Rust/Go 生态，属预期，不是探测失败）。请按 root_files 列出的构建文件（如 pom.xml/build.gradle）由 AI 识别技术栈与架构，写入 ARCHITECTURE.md / PROJECT.md。"
+  ]
+}

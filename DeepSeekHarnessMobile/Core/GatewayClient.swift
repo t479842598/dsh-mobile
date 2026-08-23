@@ -1,14 +1,15 @@
 import Foundation
 import Security
 
+// 非 final：DshDirectClient 以继承方式复用同一公开接口（见 Core/DshDirectConnect.swift）。
 @MainActor
-final class GatewayClient: ObservableObject {
+class GatewayClient: ObservableObject {
     /// History responses contain raw trajectory events (including request
     /// context) and can exceed URLSessionWebSocketTask's 1 MiB default.
     /// Gateway v0.1.12 normally keeps history pages below 4 MiB. Retain a much
     /// larger transport ceiling for the documented case where one indivisible
     /// event is itself larger than the page budget.
-    private static let maximumIncomingMessageSize = 64 * 1024 * 1024
+    static let maximumIncomingMessageSize = 64 * 1024 * 1024
 
     @Published private(set) var state: ConnectionState = .disconnected
     @Published private(set) var serverPort: Int?
@@ -18,22 +19,28 @@ final class GatewayClient: ObservableObject {
     var onConnectionFailure: ((String) -> Void)?
     private var socket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
-    private var reconnectTask: Task<Void, Never>?
+    var reconnectTask: Task<Void, Never>?
     private var endpoint: URL?
-    private var wantsConnection = false
+    var wantsConnection = false
     private var pairingCode: String?
-    private var lastReportedFailure: String?
+    var lastReportedFailure: String?
     /// iOS may suspend and tear down a normal WebSocket after the app moves
     /// into the background. Keep this lifecycle state separate from protocol
     /// failures so an expected transport interruption doesn't become a modal
     /// error when the app returns to the foreground.
-    private var isApplicationInBackground = false
-    private var isRecoveringFromBackground = false
+    // 后台生命周期标记对直连子类可见（iOS 挂起会拆掉 WebSocket，见下方注释）。
+    var isApplicationInBackground = false
+    var isRecoveringFromBackground = false
 
     deinit {
         receiveTask?.cancel()
         reconnectTask?.cancel()
         socket?.cancel(with: .goingAway, reason: nil)
+    }
+
+    /// 供同模块的直连子类驱动连接状态（state 的 setter 保持 private）。
+    func updateState(_ newValue: ConnectionState) {
+        state = newValue
     }
 
     func connect(to rawEndpoint: String) {
@@ -369,6 +376,13 @@ final class GatewayClient: ObservableObject {
         case (_, 4004):
             detail = "移动网关已关闭（WebSocket 4004）。已保留设备凭据，重新开启后会自动重连。"
             shouldReconnect = true
+            shouldReportFailure = !(isApplicationInBackground || isRecoveringFromBackground)
+        case (_, _) where nsError.code == NSURLErrorCancelled:
+            // The connection was cancelled (e.g. a pairing attempt superseded by
+            // a new connect, or the transport torn down deliberately). Do not
+            // spin an endless 2s reconnect loop for a cancelled attempt.
+            detail = "WebSocket 连接已取消（\(nsError.localizedDescription)）。请重新扫码配对或重试连接。"
+            shouldReconnect = false
             shouldReportFailure = !(isApplicationInBackground || isRecoveringFromBackground)
         default:
             let reasonSuffix = closeReason.flatMap { $0.isEmpty ? nil : "；服务端原因：\($0)" } ?? ""

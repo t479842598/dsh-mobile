@@ -17,7 +17,12 @@
 
 ## 项目简介
 
-DeepSeek Harness Mobile 是一个面向 DeepSeek Harness 的原生 iOS 客户端。它通过 `dsh-plugin-mobile-gateway` 与 Harness 建立 WebSocket 连接，将工作区、会话、实时回复和 Agent 执行轨迹带到 iPhone，同时延续 DeepSeek WebUI 克制、清晰的视觉语言。
+DeepSeek Harness Mobile 是一个面向 DeepSeek Harness 的原生 iOS 客户端。它支持两种连接方式：
+
+- **直连网页端**（推荐）：像浏览器一样直连 DSH，输入域名和账号密码即可远程控制，无需任何网关插件。公网通过 `dsh-passwords` 密码门 + `https/wss` 安全连接，局域网可免登录直连。
+- **移动桥接**：通过 `dsh-plugin-mobile-gateway` / `dsh-plugin-mobile-bridge` 与 Harness 建立 WebSocket 连接，扫码或手动 Token 配对。
+
+两种方式共享同一套状态层与视图，将工作区、会话、实时回复和 Agent 执行轨迹带到 iPhone，同时延续 DeepSeek WebUI 克制、清晰的视觉语言。
 
 界面提供浅色与深色模式，并在支持的系统上使用 Liquid Glass 导航与交互控件；深色首页则以深海蓝、水波纹、网格和点阵鲸鱼构成与 Harness 官网一致的视觉氛围。
 
@@ -29,6 +34,7 @@ DeepSeek Harness Mobile 是一个面向 DeepSeek Harness 的原生 iOS 客户端
 
 ## 功能亮点
 
+- **直连网页端**：无需任何网关插件，像浏览器一样输入部署地址与账号密码直接连接 DeepSeek Harness 网页端，支持公网域名（`https/wss` + `dsh-passwords` 密码门）与局域网裸部署（`http://<ip>:<port>` 免登录）。
 - **原生实时对话**：接收 WebSocket 增量事件，逐步展示正文、思考过程、工具调用和工具结果。
 - **历史与实时解耦**：大量历史记录分页合并时，实时尾部仍可独立更新，避免阻塞生成和用户滚动。
 - **智能吸底**：停留在底部时跟随新内容；用户主动浏览历史后停止抢夺滚动位置。
@@ -36,7 +42,7 @@ DeepSeek Harness Mobile 是一个面向 DeepSeek Harness 的原生 iOS 客户端
 - **工作区与会话管理**：浏览目录、创建或切换工作区，搜索会话并创建新会话。
 - **会话配置**：切换当前会话的模型、思考等级与访问权限。
 - **全局默认配置**：设置新会话默认使用的 Agent 预设、权限、模型和思考等级，并与 WebUI 使用同一部署配置。
-- **安全配对**：支持扫描 WebUI 二维码或手动连接；长期凭据保存在系统安全存储中。
+- **安全配对**：桥接模式支持扫描 WebUI 二维码或手动连接；长期凭据保存在系统安全存储中。直连模式的账号密码与会话 Cookie 同样仅存于 Keychain。
 - **移动端交互**：对话与轨迹页面常驻并支持左右滑动切换，保留各自的滚动位置和页面状态。
 
 ## 界面预览
@@ -126,6 +132,10 @@ DeepSeek Harness Mobile 是一个面向 DeepSeek Harness 的原生 iOS 客户端
 
 移动端可扫描 WebUI 生成的一次性二维码完成配对。公网地址必须使用 `wss://`，配对码仅可使用一次并会在短时间后过期；已配对设备可在网关管理界面中查看和管理。
 
+> 从 v1.2 起，App 支持两种连接方式（设置 → 连接方式）：
+> - **移动桥接**：通过 `dsh-plugin-mobile-gateway` / `dsh-plugin-mobile-bridge` 插件的扫码/Token 配对（本小节）。
+> - **直连网页端**：像浏览器一样用账号密码直连 DeepSeek Harness 网页端，无需任何网关插件（见下一小节）。
+
 #### 配对步骤
 
 1. **确认当前尚未配对。** 第一次进入 DshMobile 时，应用可能提示“鉴权失败（HTTP 401）”。这表示当前设备还没有与 Mobile Gateway 完成配对，关闭提示后继续下面的操作即可。
@@ -166,51 +176,100 @@ DeepSeek Harness Mobile 是一个面向 DeepSeek Harness 的原生 iOS 客户端
      <img src="Docs/images/screenshots/pairing-07-connected.png" alt="DshMobile 配对完成后的已连接状态" width="320">
    </p>
 
+### 直连网页端（无需网关插件）
+
+选择“直连网页端”后，在设置中填写部署地址与账号密码即可像浏览器一样远程使用 Harness，适合公网域名远程控制与局域网免配对直连。
+
+1. **填写部署地址。** 公网部署填域名，例如 `https://ds.example.com`；局域网裸部署填 `http://<Mac-IP>:3080`（未安装密码门时免登录，只填地址即可连接）。
+
+2. **填写账号密码（有密码门时）。** 地址带 `dsh-passwords` 密码门时，App 会自动走“GET /gateway/login 取 CSRF → POST 提交账密 → 持有会话 Cookie”的浏览器同款登录流程；勾选“记住密码”则账号密码与登录 Cookie 都存入 Keychain，后续自动续期。
+
+3. **点击“登录并连接”。** 连接成功后 App 直连 DSH 的原生协议：RPC 走 `POST /api/*`，实时事件走 `/api/events.mux` 与 `/api/events.host` 两条下行 WebSocket，提问/审批通过 `/api/respond` 应答——与网页端共用同一协议面，因此不用修改网页端任何代码。
+
+   常用地址速查：
+
+   | 场景 | 地址 |
+   | --- | --- |
+   | 本机调试（模拟器） | `http://127.0.0.1:3080` |
+   | 局域网 iPhone | `http://<Mac-LAN-IP>:3080` |
+   | 公网（带密码门） | `https://<your-domain>` |
+
+> 直连模式当前覆盖：工作区/会话浏览、历史分页、实时流式对话（含图片）、提问与执行审批应答、会话取消、模型切换、新建/重命名、目录浏览与新建工作区、搜索。部署默认配置（默认 Agent/模型/权限）的修改、权限预设切换等低频写操作暂未覆盖，请到 WebUI 操作。
+
 ## 技术实现
 
-```text
-DeepSeek Harness
-       │
-       │  dsh-plugin-mobile-gateway
-       │  WebSocket / history / configuration
-       ▼
-URLSessionWebSocketTask
-       │
-       ├── Workspaces & Sessions
-       ├── Historical pages
-       ├── Live event tail
-       └── Defaults & Presets
-       ▼
-SwiftUI + UIKit interoperability
+App 支持两种连接方式，共享同一套帧驱动的状态层与视图：
+
 ```
+                         DeepSeek Harness
+                               │
+          ┌────────────────────┼────────────────────┐
+          │  桥接模式             │  直连模式              │
+          │  dsh-plugin-mobile-  │  dsh-passwords 密码门   │
+          │  gateway / bridge    │  (可选)                 │
+          │  ws://host:3080/     │                         │
+          │  ws/mobile           │  POST /api/* (RPC)      │
+          │  (配对码 + Token)      │  /api/events.mux  (WS  │
+          │                     │       下行事件流)       │
+          └──────────┬──────────┘  /api/events.host (WS  │
+                     │               下行信息流)       │
+                     │             /api/respond    (应答)  │
+                     │             (账密 + Cookie 鉴权)    │
+                     └──────────────┬────────────────────┘
+                                    │
+                    GatewayFrame → AppStore.handle(_:)
+                                    │
+                          ┌─────────┼─────────┐
+                          │         │         │
+                     Workspace  Conversation  Settings
+                          │         │         │
+                          └─────────┼─────────┘
+                                    ▼
+                     SwiftUI + UIKit interoperability
+```
+
+**桥接模式**（dsh-plugin-mobile-gateway / dsh-plugin-mobile-bridge）：移动端通过 `/ws/mobile` 端点与网关插件建立单一全双工 WebSocket，JSON 帧直传。配对通过 WebUI 二维码或手动输入 Token 完成。
+
+**直连模式**（v1.2 起）：不再依赖任何网关插件，像浏览器一样直连 DSH 网页端。其核心是 DSH 浏览器客户端自身的三条物理通路：
+- `POST /api/<method>`（RPC，JSON 信封 client-request ↔ server-response）
+- `/api/events.mux`（WebSocket，聚合全会话事件流——仅下行）
+- `/api/events.host`（WebSocket，宿主级信息流——仅下行）
+- `POST /api/respond`（审批/提问应答）
+
+直连栈（`Core/DshDirectConnect.swift`）负责：账号密码登录（CSRF + Cookie）、RPC 调用、双流生命周期与指数退避重连、原生协议→GatewayFrame 翻译——AppStore 与全部视图仅消费 GatewayFrame，完全不需要感知传输差异。
 
 - SwiftUI 原生界面，必要位置与 UIKit 协作以获得稳定的分页、滚动和增量渲染体验。
 - 历史分页与实时事件尾部采用独立数据路径，再按事件身份安全合并。
 - 已渲染消息保持稳定，流式传输时只更新正在生成的内容块。
-- iOS 26 及以上使用系统 Liquid Glass 能力，较早系统使用视觉一致的材质回退。
+- iOS 26 及以上使用系统 Liquid Glass 能力，较早系统使用视觉一致的材质回放。
 
 ## 运行项目
 
 ### 环境要求
 
-- macOS 与可构建 iOS 17.0+ 的 Xcode
+- macOS 26 与可构建 iOS 17.0+ 的 Xcode 26
 - iOS 17.0+ 模拟器或真机
-- 已启用 `dsh-plugin-mobile-gateway` 的 DeepSeek Harness
+- DeepSeek Harness（≥0.1.0-rc.6 实测）
+- **桥接模式**需要：已启用 `dsh-plugin-mobile-gateway`（或 `dsh-plugin-mobile-bridge`）
+- **直连模式**不需要任何网关插件，只需 DSH 本身运行即可（公网远程建议安装 `dsh-passwords` 提供账号密码登录）
 
 ### 启动步骤
 
-1. 启动 DeepSeek Harness，并确认 `dsh-plugin-mobile-gateway` 已加载。
+1. 启动 DeepSeek Harness（`dsh web`）。
 2. 使用 Xcode 打开 `DeepSeekHarnessMobile.xcodeproj`。
 3. 选择 `DeepSeekHarnessMobile` Scheme 和目标设备后运行。
-4. 在应用中扫描 WebUI 配对二维码，或手动填写网关地址。
+4. 在设置中选择连接方式：
+   - **直连网页端**：输入地址 + 账号密码（推荐）
+   - **移动桥接**：扫描 WebUI 配对二维码，或手动填写网关地址
 
 本机调试时常用的连接地址：
 
-| 场景 | 地址 |
-| --- | --- |
-| iOS Simulator | `ws://127.0.0.1:3080/ws/mobile` |
-| 同一局域网内的 iPhone | `ws://<Mac-LAN-IP>:3080/ws/mobile` |
-| 公网部署 | `wss://<your-domain>/ws/mobile` |
+| 场景 | 桥接地址 | 直连地址 |
+| --- | --- | --- |
+| iOS Simulator | `ws://127.0.0.1:3080/ws/mobile` | `http://127.0.0.1:3080` |
+| 同一局域网内的 iPhone | `ws://<Mac-LAN-IP>:3080/ws/mobile` | `http://<Mac-LAN-IP>:3080` |
+| 公网（带密码门） | `wss://<your-domain>/ws/mobile` | `https://<your-domain>` |
+| 公网（TLS 反代） | `wss://<your-domain>/ws/mobile` | `https://<your-domain>` |
 
 > [!NOTE]
 > 真机不能使用 `127.0.0.1` 访问 Mac，请改用 Mac 的局域网 IP；公网部署应在网关前配置 TLS 反向代理。
