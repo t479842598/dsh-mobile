@@ -475,6 +475,7 @@ final class DshDirectClient: GatewayClient {
     private var pendingApprovals: [String: (sessionId: String, approvalId: String)] = [:]
     /// 审批解决帧只带 approvalId，需要反查 rpcId 清理提问状态。
     private var approvalRpcIds: [String: String] = [:]
+    private var keepaliveTask: Task<Void, Never>?
     private lazy var redirectBlocker = DshDirectAuthService.RedirectBlocker()
     private lazy var httpSession: URLSession = makeHTTPSession()
     private lazy var socketSession: URLSession = makeHTTPSession()
@@ -646,11 +647,11 @@ final class DshDirectClient: GatewayClient {
     }
 
     override func saveDefaultModel(provider: String, model: String, reasoningEffort: String?) {
-        emit(DirectFrameTranslator.errorFrame(code: "unsupported", message: "直连模式暂不支持修改默认模型，请前往 WebUI 设置。", requestType: "save-default-model"))
+        emit(DirectFrameTranslator.errorFrame(code: "info", message: "直连模式暂不支持修改默认模型，请前往 WebUI 设置。", requestType: "save-default-model"))
     }
 
     override func setDefault(target: String, value: String) {
-        emit(DirectFrameTranslator.errorFrame(code: "unsupported", message: "直连模式暂不支持修改部署默认配置，请前往 WebUI 设置。", requestType: "set-default", target: target, value: value))
+        emit(DirectFrameTranslator.errorFrame(code: "info", message: "直连模式暂不支持修改部署默认配置，请前往 WebUI 设置。", requestType: "set-default", target: target, value: value))
     }
 
     override func requestProviders() {
@@ -723,6 +724,7 @@ final class DshDirectClient: GatewayClient {
             reconnectAttempt = 0
             isRecoveringFromBackground = false
             updateState(.connected)
+            startKeepalive(generation: generation)
             onFrame?(GatewayFrame(
                 kind: "hello",
                 protocol: 3,
@@ -1144,7 +1146,24 @@ final class DshDirectClient: GatewayClient {
 
     private func handleEstablishmentFailure(_ error: Error) {
         if let authError = error as? DshDirectAuthService.AuthError {
-            terminate(authError.localizedDescription)
+            switch authError {
+            case .invalidURL:
+                terminate(authError.localizedDescription)
+            case .notConfigured:
+                terminate(authError.localizedDescription)
+            case .rejected(let status, _) where status == 401:
+                // 凭据过期：丢弃旧 token 并重试重登，不终止。
+                var credentials = DshDirectCredentialStore.load(baseURL: httpBaseURL!)
+                credentials.token = nil
+                DshDirectCredentialStore.saveQuietly(credentials, baseURL: httpBaseURL!)
+                cookieHeader = nil
+                scheduleReconnect(reason: "凭据已过期，正在用账号密码重新登录")
+            case .rejected:
+                terminate(authError.localizedDescription)
+            case .gateUnreachable:
+                // 临时网络故障（TCP 超时 / DNS 解析失败等）：指数退避重试，不终止。
+                scheduleReconnect(reason: authError.localizedDescription)
+            }
             return
         }
         if error is RPCBusinessError {
@@ -1155,6 +1174,7 @@ final class DshDirectClient: GatewayClient {
         scheduleReconnect(reason: error.localizedDescription)
     }
 
+    /// 预测成功 → 停止当前重连定时器、继续接收事件。
     private func scheduleReconnect(reason: String) {
         teardownStreams()
         updateState(.failed(reason))
@@ -1174,7 +1194,7 @@ final class DshDirectClient: GatewayClient {
         }
     }
 
-    /// 终止连接（鉴权失败等不可恢复场景）：停止重连并把失败原因交给 UI。
+    /// 终止连接（不可恢复场景：地址无效、未配置账密、服务端拒绝）：停止重连并把失败原因交给 UI。
     private func terminate(_ detail: String) {
         wantsConnection = false
         reconnectTask?.cancel()
@@ -1182,6 +1202,19 @@ final class DshDirectClient: GatewayClient {
         teardownStreams()
         updateState(.failed(detail))
         reportFailureOnce(detail)
+    }
+
+    /// 启动双流保活定时器（每 30 秒 ping 一次），防止 iOS 回收空闲 TCP 连接。
+    private func startKeepalive(generation: Int) {
+        keepaliveTask?.cancel()
+        keepaliveTask = Task { [weak self] in
+            while !Task.isCancelled, let self {
+                try? await Task.sleep(for: .seconds(30))
+                guard self.connectGeneration == generation, self.state.isConnected else { return }
+                if let socket = self.muxSocket { try? await self.ping(socket) }
+                if let socket = self.hostSocket { try? await self.ping(socket) }
+            }
+        }
     }
 
     private func reportFailureOnce(_ detail: String) {
@@ -1221,6 +1254,8 @@ final class DshDirectClient: GatewayClient {
     }
 
     private func teardownStreams() {
+        keepaliveTask?.cancel()
+        keepaliveTask = nil
         muxReceiveTask?.cancel()
         hostReceiveTask?.cancel()
         muxReceiveTask = nil

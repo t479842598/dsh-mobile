@@ -93,7 +93,7 @@ final class AppStore: ObservableObject {
 
     /// 当前传输实例。两种模式共用同一公开接口（DshDirectClient 继承 GatewayClient），
     /// 切换模式时整体替换，所有既有调用点无需感知。
-    private(set) var gateway: GatewayClient
+    @Published private(set) var gateway: GatewayClient
     @Published var connectionMode: ConnectionMode {
         didSet {
             guard oldValue != connectionMode else { return }
@@ -173,7 +173,7 @@ final class AppStore: ObservableObject {
         endpoint = UserDefaults.standard.string(forKey: "gateway.endpoint") ?? "ws://127.0.0.1:3080/ws/mobile"
         if let data = UserDefaults.standard.data(forKey: "gateway.sessions"),
            let decoded = try? JSONDecoder().decode([SessionSummary].self, from: data) { sessions = decoded }
-        let savedMode = ConnectionMode(rawValue: UserDefaults.standard.string(forKey: "connection.mode") ?? "") ?? .bridge
+        let savedMode = ConnectionMode(rawValue: UserDefaults.standard.string(forKey: "connection.mode") ?? "") ?? .direct
         connectionMode = savedMode
         directBaseURL = UserDefaults.standard.string(forKey: "direct.baseURL") ?? ""
         directUsername = UserDefaults.standard.string(forKey: "direct.username") ?? ""
@@ -892,6 +892,12 @@ final class AppStore: ObservableObject {
                 finishHistoryLoading(id)
             }
             let detail = [frame.code, frame.message].compactMap { $0 }.joined(separator: ": ")
+            let isInfo = frame.code == "info"
+            if isInfo {
+                // 直连模式下"暂不支持"的告知不设 lastError，仅以通知提示。
+                notice("提示", frame.message ?? detail, sessionId: frame.sessionId, isError: false)
+                break
+            }
             if let requestType = frame.requestType,
                ["question-answer", "question-cancel"].contains(requestType),
                let rpcId = frame.rpcId ?? pendingQuestionRequests.first(where: { $0.sessionId == frame.sessionId })?.rpcId {
@@ -900,8 +906,6 @@ final class AppStore: ObservableObject {
             let failedRequest = frame.requestType ?? frame.code.flatMap(sessionControlKind(from:)) ?? frame.message.flatMap(sessionControlKind(from:))
             if let failedRequest { finishSessionControlRequest(failedRequest) }
             if frame.requestType == nil, failedRequest == nil {
-                // A malformed gateway error cannot be correlated safely. Stop
-                // all composer spinners and surface the error instead.
                 for kind in Array(sessionControlLoadingKinds) { finishSessionControlRequest(kind) }
             }
             lastError = detail
