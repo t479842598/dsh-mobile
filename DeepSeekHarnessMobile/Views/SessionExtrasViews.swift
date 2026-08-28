@@ -320,6 +320,65 @@ private struct SubagentTranscriptLine: Identifiable, Hashable {
     let isMine: Bool
 }
 
+// MARK: - 协议通知中心（protocolNotices 展示）
+
+struct NoticeListView: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if store.protocolNotices.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "bell.slash")
+                            .font(.system(size: 34))
+                            .foregroundStyle(.secondary)
+                        Text("暂无通知")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List {
+                        ForEach(store.protocolNotices.reversed()) { item in
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: item.isError ? "exclamationmark.triangle.fill" : "bell.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(item.isError ? Color.red : DSHColor.ocean)
+                                    Text(item.title)
+                                        .font(.subheadline.weight(.medium))
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text(item.date, style: .time)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text(item.text)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(3)
+                            }
+                            .padding(.vertical, 3)
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .navigationTitle("通知中心 · \(store.protocolNotices.count)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .onAppear { store.markNoticesSeen() }
+    }
+}
+
 // MARK: - 系统分享面板（会话导出 ZIP）
 
 struct ActivityViewRepresentable: UIViewControllerRepresentable {

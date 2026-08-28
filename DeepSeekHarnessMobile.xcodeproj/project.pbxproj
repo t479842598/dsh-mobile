@@ -28,6 +28,7 @@
 		B0C0FFEE0000000000000003 /* HarnessBackground.metal in Sources */ = {isa = PBXBuildFile; fileRef = B0C0FFEE0000000000000004 /* HarnessBackground.metal */; };
 		C5F737EBF5077A9BF35E9F64 /* TrajectoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65009160A0642089906B54DF /* TrajectoryView.swift */; };
 		7E2A91C4D8B34F0A9C6E15D7 /* SessionExtrasViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B8D5F2A9E7C41D6A0F84C29 /* SessionExtrasViews.swift */; };
+		9F4C7D21B6A84E05C3D91F77 /* NotificationRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A6E8C39D5F741B0A8C26E54 /* NotificationRouter.swift */; };
 		D3A40BFC0B9C8D4B1C8FAA95 /* DeepSeekHarnessMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 430CA64DF207C7EF58574336 /* DeepSeekHarnessMobileApp.swift */; };
 		E20191A4C7B1C0A8FF57CAC1 /* Glass.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCF581253EBCFEB43865AB51 /* Glass.swift */; };
 		E73A2DB9D678DA4B8C01E349 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = 4CE3D78565179C422C796509 /* MarkdownUI */; };
@@ -72,6 +73,7 @@
 		EEABECFD00017A6E10B1F4A2 /* ConversationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
 		EEABECFD00017A6E10B1F4A3 /* HumanQuestionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HumanQuestionView.swift; sourceTree = "<group>"; };
 		3B8D5F2A9E7C41D6A0F84C29 /* SessionExtrasViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionExtrasViews.swift; sourceTree = "<group>"; };
+		2A6E8C39D5F741B0A8C26E54 /* NotificationRouter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NotificationRouter.swift; sourceTree = "<group>"; };
 		FCF581253EBCFEB43865AB51 /* Glass.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Glass.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -106,6 +108,7 @@
 				E61E231D0CD3E07857F861B0 /* GatewayClient.swift */,
 				CA11E1000000000000000002 /* DshDirectConnect.swift */,
 				954FCEA4A6E71F3D1A22BB53 /* GatewayModels.swift */,
+				2A6E8C39D5F741B0A8C26E54 /* NotificationRouter.swift */,
 				12863E736F832D8F502B94A0 /* Theme.swift */,
 			);
 			path = Core;
@@ -329,6 +332,7 @@
 				80E777AC0855635BC3D12EA7 /* GatewayClient.swift in Sources */,
 				CA11E1000000000000000001 /* DshDirectConnect.swift in Sources */,
 				AFAE90EEB4462AD84169D356 /* GatewayModels.swift in Sources */,
+				9F4C7D21B6A84E05C3D91F77 /* NotificationRouter.swift in Sources */,
 				991D4FD90B81F84A0B8B79AD /* Theme.swift in Sources */,
 				E20191A4C7B1C0A8FF57CAC1 /* Glass.swift in Sources */,
 				A0C0FFEE0000000000000001 /* ConversationViewport.swift in Sources */,

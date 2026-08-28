@@ -57,6 +57,12 @@ private struct RootNavigationHost: View, Equatable {
         .onChange(of: navigationPath) { _, path in
             if path.isEmpty { store.resumeWorkspace() }
         }
+        .onChange(of: store.notificationOpenRequest) { _, sessionId in
+            guard let sessionId else { return }
+            store.notificationOpenRequest = nil
+            let header = conversationHeader(for: store.sessions.first { $0.id == sessionId })
+            navigate(to: .conversation(header))
+        }
     }
 
     @ViewBuilder

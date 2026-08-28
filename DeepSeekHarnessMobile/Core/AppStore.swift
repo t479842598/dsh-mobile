@@ -56,6 +56,19 @@ final class AppStore: ObservableObject {
     /// 导出成功后待分享的临时 ZIP 文件；由视图消费后置回 nil。
     @Published var sessionExportURL: URL?
     @Published var protocolNotices: [GatewayNotice] = []
+    /// 后台提问/审批本地通知开关（持久化）。
+    @Published var notificationsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(notificationsEnabled, forKey: "notifications.enabled")
+            if notificationsEnabled { NotificationRouter.shared.requestAuthorization() }
+        }
+    }
+    /// 点击本地通知后待打开的会话 id；由 RootView 消费后置回 nil。
+    @Published var notificationOpenRequest: String?
+    /// 通知中心已读水位（按条数计，仅内存）。
+    private var noticesSeenCount = 0
+    var unseenNoticeCount: Int { max(0, protocolNotices.count - noticesSeenCount) }
+    func markNoticesSeen() { noticesSeenCount = protocolNotices.count }
     @Published var endpoint: String { didSet { UserDefaults.standard.set(endpoint, forKey: "gateway.endpoint") } }
     @Published var interfaceStyle: InterfaceStyle = .system
     @Published var lastError: String?
@@ -154,11 +167,18 @@ final class AppStore: ObservableObject {
         directBaseURL = UserDefaults.standard.string(forKey: "direct.baseURL") ?? ""
         directUsername = UserDefaults.standard.string(forKey: "direct.username") ?? ""
         directRememberPassword = UserDefaults.standard.object(forKey: "direct.rememberPassword") as? Bool ?? true
+        notificationsEnabled = UserDefaults.standard.object(forKey: "notifications.enabled") as? Bool ?? true
         let client = DshDirectClient()
         gateway = client
         gateway.onFrame = { [weak self] frame in self?.handle(frame) }
         gateway.onConnectionFailure = { [weak self] detail in
             self?.handleConnectionFailure(detail)
+        }
+        NotificationRouter.shared.onOpenSession = { [weak self] sessionId in
+            self?.notificationOpenRequest = sessionId
+        }
+        if notificationsEnabled {
+            NotificationRouter.shared.requestAuthorization()
         }
     }
 
@@ -1038,6 +1058,15 @@ final class AppStore: ObservableObject {
             questions.first?.question ?? "请回答 Agent 的问题",
             sessionId: sessionId
         )
+        // 后台到达的提问/审批发本地通知，点击可直达会话。
+        if applicationIsInBackground, notificationsEnabled, frame.replay != true {
+            let isApproval = (questions.first?.options ?? []).contains { $0.label == "允许一次" }
+            NotificationRouter.shared.notify(
+                title: isApproval ? "工具审批待确认" : "Agent 正在等待回答",
+                body: questions.first?.question ?? "请回到 App 处理",
+                sessionId: sessionId
+            )
+        }
     }
 
     private func handleQuestionResponse(_ frame: GatewayFrame) {

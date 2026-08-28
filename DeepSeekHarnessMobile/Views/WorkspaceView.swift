@@ -12,6 +12,7 @@ struct WorkspaceView: View {
     @State private var showsManualPairing = false
     @State private var renamingSession: SessionSummary?
     @State private var renameText = ""
+    @State private var showsNotices = false
     @FocusState private var sessionSearchIsFocused: Bool
 
     var body: some View {
@@ -80,11 +81,41 @@ struct WorkspaceView: View {
             HarnessMark()
             Spacer()
             authenticationMenu
+            noticesButton
             settingsButton
                 // Match the outer glass circle to the workspace cards' trailing edge.
                 .padding(.trailing, -4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 协议通知中心入口：铃铛 + 未读角标，点开查看积压的 protocolNotices。
+    private var noticesButton: some View {
+        Button {
+            showsNotices = true
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: "bell")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .frame(width: 38, height: 38)
+                if store.unseenNoticeCount > 0 {
+                    Text(store.unseenNoticeCount > 99 ? "99+" : "\(store.unseenNoticeCount)")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(DSHColor.orange, in: Capsule())
+                        .offset(x: 6, y: 2)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("通知中心")
+        .sheet(isPresented: $showsNotices) {
+            NoticeListView()
+                .environmentObject(store)
+        }
     }
 
     @ViewBuilder

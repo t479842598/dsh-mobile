@@ -136,6 +136,13 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            Section("通知") {
+                Toggle("后台提问/审批提醒", isOn: $store.notificationsEnabled)
+                Text("App 在后台收到 Agent 提问或工具审批时发送本地通知，点击可直接打开对应会话。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .navigationTitle("设置")
         .task {
