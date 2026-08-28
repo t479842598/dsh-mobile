@@ -468,6 +468,10 @@ final class DshDirectClient: GatewayClient {
     private var hostReceiveTask: Task<Void, Never>?
     private var connectGeneration = 0
     private var reconnectAttempt = 0
+    /// 本端最近一次切换成功的会话级权限（直连无读取端点，仅作菜单勾选态）。
+    private var cachedSessionPermission: [String: String] = [:]
+    /// 会话级权限固定预设（与 WebUI permissionPresets 一致）。
+    static let permissionPresetOptions = ["read-only", "workspace-write", "danger-full-access"]
     private var muxOpened = false
     private var hostOpened = false
     private var isAuthenticating = false
@@ -632,14 +636,167 @@ final class DshDirectClient: GatewayClient {
         }
     }
 
-    // MARK: 直连暂不支持的方法（合成空成功帧收敛 loading，UI 静默降级）
+    // MARK: 会话级权限（Typert commands/execute 通道）
 
+    /// 直连无 permission-options 端点：可选项即三个固定预设；当前值以本端
+    /// 最近一次切换成功的缓存为准（首次进入会话时为 nil，菜单不勾选）。
     override func requestPermissionOptions(sessionId: String?) {
-        emit(GatewayFrame(kind: "permission-options", sessionId: sessionId))
+        var frame = GatewayFrame(kind: "permission-options", sessionId: sessionId)
+        frame.sessionPermissions = GatewaySessionPermissions(
+            options: Self.permissionPresetOptions.map { GatewayPermissionOption(value: $0, name: $0) },
+            currentValue: sessionId.flatMap { cachedSessionPermission[$0] }
+        )
+        emit(frame)
     }
 
+    /// 会话级权限切换走 Typert 斜杠命令通道（ADR-0002）：
+    /// POST /api/commands/execute {args: {agentId, line: "/permission <preset>", images: []}}。
+    /// `images` 是新版 descriptor 的必填字段，空数组也必须显式携带，
+    /// 否则报 arguments-invalid missing "images"。
     override func setPermission(sessionId: String, name: String) {
-        emit(DirectFrameTranslator.errorFrame(code: "info", message: "直连模式暂不支持切换权限预设，请前往 WebUI 操作。", requestType: "permission", sessionId: sessionId))
+        runTypert(line: "/permission \(name)", agentId: sessionId, requestType: "permission") { [weak self] _ in
+            self?.cachedSessionPermission[sessionId] = name
+            var frame = GatewayFrame(kind: "permission", sessionId: sessionId)
+            frame.set = name
+            return frame
+        }
+    }
+
+    // MARK: 会话管理与队列（BFF RPC）
+
+    func createDirectory(path: String, name: String) {
+        runRPC(method: "host.createDirectory", payload: .object(["path": .string(path), "name": .string(name)]), requestType: "directory-create") {
+            var frame = GatewayFrame(kind: "directory-create")
+            frame.path = $0["path"]?.stringValue ?? (path as NSString).appendingPathComponent(name)
+            return frame
+        }
+    }
+
+    /// 停止当前回合。成功后 turn/end 事件会经事件流自然到达，无需额外收尾帧。
+    func cancelTurn(sessionId: String) {
+        runRPC(method: "session.cancel", payload: .object(["sessionId": .string(sessionId)]), requestType: "session-cancel") { _ in
+            var frame = GatewayFrame(kind: "session-cancel", sessionId: sessionId)
+            frame.set = sessionId
+            return frame
+        }
+    }
+
+    func renameSession(sessionId: String, title: String) {
+        runRPC(method: "session.rename", payload: .object(["sessionId": .string(sessionId), "title": .string(title)]), requestType: "session-rename") { _ in
+            var frame = GatewayFrame(kind: "session-renamed", sessionId: sessionId)
+            frame.set = title
+            return frame
+        }
+    }
+
+    func forkSession(sessionId: String) {
+        runRPC(method: "session.fork", payload: .object(["sessionId": .string(sessionId)]), requestType: "session-fork") {
+            var frame = GatewayFrame(kind: "session-forked", sessionId: sessionId)
+            frame.newSessionId = $0["sessionId"]?.stringValue
+            return frame
+        }
+    }
+
+    func archiveSession(sessionId: String) {
+        runRPC(method: "workspace.archiveSession", payload: .object(["sessionId": .string(sessionId)]), requestType: "session-archive") {
+            var frame = GatewayFrame(kind: "session-archived", sessionId: sessionId)
+            frame.archivedSessionIds = $0["archivedSessionIds"]?.arrayValue?.compactMap(\.stringValue)
+            return frame
+        }
+    }
+
+    /// 编辑/移除/插队一条仍在排队的消息（session.updateQueue）。
+    /// - Parameters:
+    ///   - action: `.edit(text)` / `.remove` / `.steer`
+    func updateQueueItem(sessionId: String, itemId: String, action: DshQueueAction) {
+        var payload: [String: JSONValue] = [
+            "sessionId": .string(sessionId),
+            "itemId": .string(itemId)
+        ]
+        switch action {
+        case .edit(let text):
+            payload["action"] = .object([
+                "kind": .string("edit"),
+                "content": .array([.object(["type": .string("text"), "text": .string(text)])])
+            ])
+        case .remove:
+            payload["action"] = .object(["kind": .string("remove")])
+        case .steer:
+            payload["action"] = .object(["kind": .string("steer")])
+        }
+        runRPC(method: "session.updateQueue", payload: .object(payload), requestType: "queue-update") { _ in
+            // session/queue 快照会随后到达并收敛 UI；此处仅确认。
+            return GatewayFrame(kind: "queue-ack", sessionId: sessionId)
+        }
+    }
+
+    // MARK: 子代理（BFF subagent.*）
+
+    func requestSubagents(parentSessionId: String) {
+        runRPC(method: "subagent.list", payload: .object(["parentSessionId": .string(parentSessionId)]), requestType: "subagents") {
+            var frame = GatewayFrame(kind: "subagents", sessionId: parentSessionId)
+            frame.items = $0["entries"]?.arrayValue ?? []
+            return frame
+        }
+    }
+
+    func requestSubagentHistory(
+        parentSessionId: String,
+        childSessionId: String,
+        mode: String,
+        beforeSeq: Int? = nil,
+        maxMessages: Int = 50
+    ) async throws -> (events: [RawSessionEvent], hasMore: Bool) {
+        var args: [String: JSONValue] = [
+            "parentSessionId": .string(parentSessionId),
+            "childSessionId": .string(childSessionId),
+            "mode": .string(mode),
+            "maxMessages": .number(Double(maxMessages))
+        ]
+        if let beforeSeq { args["beforeSeq"] = .number(Double(beforeSeq)) }
+        let value = try await call("subagent.history", .object(args))
+        let events = (value["events"]?.arrayValue ?? []).compactMap { $0.decode(RawSessionEvent.self) }
+        return (events, value["hasMore"]?.boolValue ?? false)
+    }
+
+    func promptSubagent(parentSessionId: String, childSessionId: String, text: String) async throws {
+        _ = try await call("subagent.prompt", .object([
+            "parentSessionId": .string(parentSessionId),
+            "childSessionId": .string(childSessionId),
+            "mode": .string("continuable"),
+            "content": .array([.object(["type": .string("text"), "text": .string(text)])]),
+            "clientTimeZone": .string(TimeZone.current.identifier)
+        ]))
+    }
+
+    func interruptSubagent(parentSessionId: String, childSessionId: String, mode: String) async throws {
+        _ = try await call("subagent.interrupt", .object([
+            "parentSessionId": .string(parentSessionId),
+            "childSessionId": .string(childSessionId),
+            "mode": .string(mode)
+        ]))
+    }
+
+    // MARK: 会话导出（GET /api/session.export）
+
+    /// 导出为 ZIP（内含 session.jsonl）。`includeDescendants` 连子代理一起导出。
+    func downloadSessionExport(sessionId: String, includeDescendants: Bool = true) async throws -> Data {
+        guard let base = httpBaseURL else { throw DshDirectAuthService.AuthError.notConfigured }
+        var components = URLComponents(url: base.appendingPathComponent("api/session.export"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "sessionId", value: sessionId),
+            URLQueryItem(name: "includeDescendants", value: includeDescendants ? "true" : "false")
+        ]
+        guard let url = components?.url else { throw DshDirectAuthService.AuthError.invalidURL }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = DshDirectProtocol.rpcTimeout * 2
+        if let cookieHeader { request.setValue(cookieHeader, forHTTPHeaderField: "Cookie") }
+        let (data, response) = try await httpSession.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw DshDirectAuthService.AuthError.rejected(status: status, message: "导出会话失败（HTTP \(status)）。")
+        }
+        return data
     }
 
     override func requestContextUsage(sessionId: String) {
@@ -1047,6 +1204,11 @@ final class DshDirectClient: GatewayClient {
                   let rpcId = approvalRpcIds.removeValue(forKey: approvalId) else { return }
             pendingApprovals.removeValue(forKey: rpcId)
             emit(GatewayFrame(kind: "question-resolved", sessionId: payload["sessionId"]?.stringValue, rpcId: rpcId, outcome: "answered"))
+        case "session/queue":
+            // 排队/插队收件箱的全量快照：每次入队、变更、认领都会重发整表。
+            var frame = GatewayFrame(kind: "queue", sessionId: payload["sessionId"]?.stringValue)
+            frame.items = payload["items"]?.arrayValue ?? []
+            emit(frame)
         case "host/session-added", "host/session-removed", "host/workspace-changed",
              "host/workspace-removed", "host/archived-sessions-changed":
             // 远端结构变化后重新拉基线，保持多端一致。
@@ -1235,6 +1397,38 @@ final class DshDirectClient: GatewayClient {
         Task {
             do {
                 let value = try await self.call(method, payload)
+                if let frame = translate(value) { self.emit(frame) }
+            } catch let error as RPCBusinessError {
+                self.emit(DirectFrameTranslator.errorFrame(code: error.code, message: error.message, requestType: requestType))
+            } catch {
+                self.emit(DirectFrameTranslator.errorFrame(code: "transport", message: error.localizedDescription, requestType: requestType))
+            }
+        }
+    }
+
+    /// Typert 斜杠命令通道（ADR-0002）：POST /api/commands/execute。
+    /// 信封 method 必须匹配端点路径；payload 必须恰含一个 "args" 对象字段，
+    /// 且 args.images 为必填（空数组也必须显式携带，缺省报 arguments-invalid）。
+    private func runTypert(
+        line: String,
+        agentId: String,
+        requestType: String?,
+        translate: @escaping (JSONValue) -> GatewayFrame?
+    ) {
+        guard state.isConnected else {
+            updateState(.failed("直连尚未就绪，请稍候重试"))
+            return
+        }
+        Task {
+            do {
+                let value = try await self.call(
+                    "commands/execute",
+                    .object(["args": .object([
+                        "agentId": .string(agentId),
+                        "line": .string(line),
+                        "images": .array([])
+                    ])])
+                )
                 if let frame = translate(value) { self.emit(frame) }
             } catch let error as RPCBusinessError {
                 self.emit(DirectFrameTranslator.errorFrame(code: error.code, message: error.message, requestType: requestType))

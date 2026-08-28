@@ -44,7 +44,17 @@ final class AppStore: ObservableObject {
     @Published var directoryCrumbs: [GatewayDirectoryItem] = []
     @Published var directoryEntries: [GatewayDirectoryItem] = []
     @Published var directoryIsLoading = false
+    @Published var directoryCreationIsLoading = false
+    /// 新建目录成功后要在浏览器里高亮定位的完整路径。
+    @Published var createdDirectoryPathToReveal: String?
     @Published var workspaceCreationIsLoading = false
+    /// 会话排队收件箱快照（sessionId → items，来自 session/queue 推送）。
+    @Published var queuedInboxItems: [String: [GatewayQueueItem]] = [:]
+    /// 子代理目录（parentSessionId → entries）。
+    @Published var subagentEntries: [String: [JSONValue]] = [:]
+    @Published var isExportingSession = false
+    /// 导出成功后待分享的临时 ZIP 文件；由视图消费后置回 nil。
+    @Published var sessionExportURL: URL?
     @Published var protocolNotices: [GatewayNotice] = []
     @Published var endpoint: String { didSet { UserDefaults.standard.set(endpoint, forKey: "gateway.endpoint") } }
     @Published var interfaceStyle: InterfaceStyle = .system
@@ -111,6 +121,7 @@ final class AppStore: ObservableObject {
     private var isPendingGlobalModelsRequest = false
     private var pendingModelSelectionSessionId: String?
     private var pendingPermissionOptionsSessionId: String?
+    private var pendingDirectoryCreationParentPath: String?
     private var sessionControlRequestTokens: [String: UUID] = [:]
     private var defaultConfigurationRequestTokens: [String: UUID] = [:]
     /// Navigation preparation is intentionally cheap. Remote activation begins
@@ -552,6 +563,105 @@ final class AppStore: ObservableObject {
         workspaceCreationIsLoading = true
         gateway.createWorkspace(path: path)
     }
+
+    /// 在 host 端创建子文件夹并刷新父目录；创建成功后浏览器高亮该目录。
+    func createDirectory(parentPath: String, name: String) {
+        guard gateway.state.isConnected else {
+            lastError = "请先连接 DeepSeek Harness"
+            return
+        }
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else {
+            lastError = "文件夹名称不能为空"
+            return
+        }
+        pendingDirectoryCreationParentPath = parentPath
+        directoryCreationIsLoading = true
+        gateway.createDirectory(path: parentPath, name: normalizedName)
+    }
+
+    func acknowledgeCreatedDirectoryReveal(path: String) {
+        guard createdDirectoryPathToReveal == path else { return }
+        createdDirectoryPathToReveal = nil
+    }
+
+    /// 停止当前回合（session.cancel），turn/end 由事件流自然收敛。
+    func cancelCurrentTurn() {
+        guard let sessionId = selectedSessionId, gateway.state.isConnected else { return }
+        gateway.cancelTurn(sessionId: sessionId)
+    }
+
+    func renameSession(_ sessionId: String, title: String) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        gateway.renameSession(sessionId: sessionId, title: trimmed)
+    }
+
+    func forkSession(_ sessionId: String) {
+        gateway.forkSession(sessionId: sessionId)
+    }
+
+    func archiveSession(_ sessionId: String) {
+        gateway.archiveSession(sessionId: sessionId)
+    }
+
+    /// 导出会话为 ZIP（含子代理），写到临时目录供系统分享面板使用。
+    func exportSession(_ sessionId: String) {
+        guard gateway.state.isConnected, !isExportingSession else { return }
+        isExportingSession = true
+        Task {
+            defer { isExportingSession = false }
+            do {
+                let data = try await gateway.downloadSessionExport(sessionId: sessionId)
+                let fileName = "dsh-session-\(sessionId.prefix(20)).zip"
+                let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+                try data.write(to: url, options: .atomic)
+                sessionExportURL = url
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    func updateQueuedItem(_ itemId: String, action: DshQueueAction) {
+        guard let sessionId = selectedSessionId, gateway.state.isConnected else { return }
+        gateway.updateQueueItem(sessionId: sessionId, itemId: itemId, action: action)
+    }
+
+    func loadSubagents(for sessionId: String) {
+        guard gateway.state.isConnected else { return }
+        gateway.requestSubagents(parentSessionId: sessionId)
+    }
+
+    func loadSubagentHistory(parentSessionId: String, childSessionId: String, mode: String) async -> [RawSessionEvent] {
+        guard gateway.state.isConnected else { return [] }
+        return (try? await gateway.requestSubagentHistory(
+            parentSessionId: parentSessionId,
+            childSessionId: childSessionId,
+            mode: mode
+        ).events) ?? []
+    }
+
+    func promptSubagent(childSessionId: String, mode: String, text: String) async -> Bool {
+        guard let parentId = selectedSessionId, gateway.state.isConnected else { return false }
+        do {
+            try await gateway.promptSubagent(parentSessionId: parentId, childSessionId: childSessionId, text: text)
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    func interruptSubagent(childSessionId: String, mode: String) async {
+        guard let parentId = selectedSessionId, gateway.state.isConnected else { return }
+        do {
+            try await gateway.interruptSubagent(parentSessionId: parentId, childSessionId: childSessionId, mode: mode)
+            notice("子代理已中断", "中断信号已送达", sessionId: parentId)
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
     func refreshSessionControls(for sessionId: String) {
         guard gateway.state.isConnected else { return }
         pendingModelsSessionId = sessionId
@@ -811,6 +921,44 @@ final class AppStore: ObservableObject {
             directoryCrumbs = frame.crumbs ?? []
             directoryEntries = frame.entries ?? []
             notice("目录已加载", "\(frame.path ?? "") · \(directoryEntries.count) 项")
+        case "directory-create":
+            directoryCreationIsLoading = false
+            let parentPath = pendingDirectoryCreationParentPath
+            pendingDirectoryCreationParentPath = nil
+            if let path = frame.path {
+                createdDirectoryPathToReveal = path
+                notice("文件夹已创建", path)
+            }
+            // 创建后按请求时捕获的父目录刷新，避免响应迟到时误刷到
+            // 用户已经导航过去的其他目录。
+            if let parentPath { browseDirectories(path: parentPath) }
+        case "queue":
+            if let id = frame.sessionId {
+                queuedInboxItems[id] = decodeItems(frame.items, as: GatewayQueueItem.self)
+            }
+        case "queue-ack":
+            // session/queue 快照会随后到达并收敛 UI，这里无需处理。
+            break
+        case "session-cancel":
+            notice("已请求停止", "正在取消当前回合…", sessionId: frame.sessionId)
+        case "session-renamed":
+            if let id = frame.sessionId, let title = frame.set,
+               let index = sessions.firstIndex(where: { $0.id == id }) {
+                sessions[index].title = title
+                notice("会话已重命名", title, sessionId: id)
+            }
+        case "session-forked":
+            if let newId = frame.newSessionId {
+                notice("会话已 Fork", "新会话 \(newId.prefix(12))… 已加入列表", sessionId: frame.sessionId)
+                refreshRemoteState()
+            }
+        case "session-archived":
+            notice("会话已归档", "列表刷新后不再显示", sessionId: frame.sessionId)
+            // 服务端会补发 host/archived-sessions-changed，触发基线重拉。
+        case "subagents":
+            if let id = frame.sessionId {
+                subagentEntries[id] = frame.items ?? []
+            }
         case "workspace-create":
             workspaceCreationIsLoading = false
             if let workspace = frame.workspace {
@@ -828,6 +976,10 @@ final class AppStore: ObservableObject {
         case "error":
             waitingForNewSession = false
             if frame.requestType == "directories" { directoryIsLoading = false }
+            if frame.requestType == "directory-create" {
+                directoryCreationIsLoading = false
+                pendingDirectoryCreationParentPath = nil
+            }
             if frame.requestType == "workspace-create" { workspaceCreationIsLoading = false }
             if let requestType = frame.requestType,
                ["agent-presets", "defaults", "default-model", "set-default", "save-default-model"].contains(requestType) {

@@ -10,6 +10,8 @@ struct WorkspaceView: View {
     @State private var showsDirectoryBrowser = false
     @State private var showsQRScanner = false
     @State private var showsManualPairing = false
+    @State private var renamingSession: SessionSummary?
+    @State private var renameText = ""
     @FocusState private var sessionSearchIsFocused: Bool
 
     var body: some View {
@@ -263,11 +265,42 @@ struct WorkspaceView: View {
                 }
                     .buttonStyle(.plain)
                     .id("workspace-session-\(session.id)")
+                    .contextMenu {
+                        Button {
+                            renameText = session.title
+                            renamingSession = session
+                        } label: {
+                            Label("重命名", systemImage: "pencil")
+                        }
+                        Button {
+                            store.forkSession(session.id)
+                        } label: {
+                            Label("创建 Fork", systemImage: "arrow.triangle.branch")
+                        }
+                        Button(role: .destructive) {
+                            store.archiveSession(session.id)
+                        } label: {
+                            Label("归档", systemImage: "archivebox")
+                        }
+                    }
 
                 Divider()
                     .overlay(.white.opacity(0.1))
                     .padding(.leading, 18)
             }
+        }
+        .alert("重命名会话", isPresented: Binding(
+            get: { renamingSession != nil },
+            set: { if !$0 { renamingSession = nil } }
+        )) {
+            TextField("会话名称", text: $renameText)
+            Button("保存") {
+                if let session = renamingSession {
+                    store.renameSession(session.id, title: renameText)
+                }
+                renamingSession = nil
+            }
+            Button("取消", role: .cancel) { renamingSession = nil }
         }
     }
 
@@ -324,38 +357,83 @@ private struct DirectoryBrowserSheet: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
     @State private var creatingPath: String?
+    @State private var showsCreateDirectoryPrompt = false
+    @State private var newDirectoryName = ""
+    @State private var highlightedDirectoryPath: String?
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    Button {
-                        if let parentPath { store.browseDirectories(path: parentPath) }
-                    } label: {
-                        directoryRow(icon: "arrowshape.turn.up.left", title: "..", subtitle: "返回上一级")
-                    }
-                    .disabled(parentPath == nil)
-
-                    ForEach(store.directoryEntries) { entry in
+            ScrollViewReader { proxy in
+                List {
+                    Section {
                         Button {
-                            store.browseDirectories(path: entry.path)
+                            if let parentPath { store.browseDirectories(path: parentPath) }
+                        } label: {
+                            directoryRow(icon: "arrowshape.turn.up.left", title: "..", subtitle: "返回上一级")
+                        }
+                        .disabled(parentPath == nil)
+
+                        Button {
+                            newDirectoryName = ""
+                            showsCreateDirectoryPrompt = true
                         } label: {
                             directoryRow(
-                                icon: entry.hidden ? "folder.badge.questionmark" : "folder",
-                                title: entry.name,
-                                subtitle: entry.hidden ? "隐藏目录" : nil
+                                icon: "folder.badge.plus",
+                                title: store.directoryCreationIsLoading ? "正在创建文件夹…" : "新建文件夹",
+                                subtitle: "在当前目录中创建一个新的子文件夹。"
                             )
                         }
-                    }
-                } header: {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("当前目录")
-                        Text(store.directoryPath ?? "正在读取…")
-                            .font(.caption.monospaced())
-                            .textCase(nil)
-                            .foregroundStyle(.secondary)
+                        .disabled(store.directoryCreationIsLoading || store.directoryPath == nil)
+
+                        ForEach(store.directoryEntries) { entry in
+                            Button {
+                                store.browseDirectories(path: entry.path)
+                            } label: {
+                                directoryRow(
+                                    icon: entry.hidden ? "folder.badge.questionmark" : "folder",
+                                    title: entry.name,
+                                    subtitle: entry.hidden ? "隐藏目录" : nil
+                                )
+                            }
+                            .id(entry.path)
+                            .listRowBackground(
+                                ZStack {
+                                    Color(uiColor: .secondarySystemGroupedBackground)
+                                    if highlightedDirectoryPath == entry.path {
+                                        DSHColor.ocean.opacity(0.24)
+                                    }
+                                }
+                            )
+                        }
+                    } header: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("当前目录")
+                            Text(store.directoryPath ?? "正在读取…")
+                                .font(.caption.monospaced())
+                                .textCase(nil)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
+                .onChange(of: store.createdDirectoryPathToReveal) { _, path in
+                    guard let path else { return }
+                    highlightedDirectoryPath = path
+                    store.acknowledgeCreatedDirectoryReveal(path: path)
+                    withAnimation { proxy.scrollTo(path, anchor: .center) }
+                }
+            }
+            .alert("新建文件夹", isPresented: $showsCreateDirectoryPrompt) {
+                TextField("文件夹名称", text: $newDirectoryName)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button("创建") {
+                    if let currentPath = store.directoryPath {
+                        store.createDirectory(parentPath: currentPath, name: newDirectoryName)
+                    }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("将在当前目录中创建一个新的子文件夹。")
             }
             .allowsHitTesting(!store.directoryIsLoading)
             .overlay {

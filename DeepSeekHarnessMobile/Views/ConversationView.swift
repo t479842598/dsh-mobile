@@ -14,6 +14,7 @@ struct ConversationView: View {
     @State private var showsContextUsage = false
     @State private var showsSessionStats = false
     @State private var showsSessionStatsPopover = false
+    @State private var showsQueueSheet = false
     @State private var isPinnedToBottom = true
     @State private var composerHeight: CGFloat = 168
     @State private var viewportScrollToBottomToken = 0
@@ -60,6 +61,11 @@ struct ConversationView: View {
                 snapshot: store.selectedSessionStatsSnapshot,
                 sessionTitle: store.selectedSession?.title ?? "新建 DeepSeek Harness"
             )
+        }
+        .sheet(isPresented: $showsQueueSheet) {
+            ConversationQueueSheet(items: queuedItems) { itemId, action in
+                store.updateQueuedItem(itemId, action: action)
+            }
         }
     }
 
@@ -393,6 +399,36 @@ struct ConversationView: View {
                         .presentationCompactAdaptation(.popover)
                 }
 
+                if !queuedItems.isEmpty {
+                    Button { showsQueueSheet = true } label: {
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: "tray.full")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(DSHColor.ocean)
+                                .frame(width: 42, height: 42)
+                            Text("\(queuedItems.count)")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(DSHColor.orange, in: Capsule())
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("排队消息 \(queuedItems.count) 条")
+                }
+
+                if store.selectedSession?.isRunning == true {
+                    Button { store.cancelCurrentTurn() } label: {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 42, height: 42)
+                            .background(Color.red, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("停止当前回合")
+                }
+
                 Button {
                     let content = draft
                     let images = pendingImages
@@ -437,6 +473,12 @@ struct ConversationView: View {
 
     private var composerHasContent: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty
+    }
+
+    /// 当前会话排队收件箱中可见的条目（queued/steering；context 项对用户不可见）。
+    private var queuedItems: [GatewayQueueItem] {
+        guard let id = store.selectedSessionId else { return [] }
+        return (store.queuedInboxItems[id] ?? []).filter { $0.placement != "context" }
     }
 
     private var pendingImageStrip: some View {

@@ -118,6 +118,7 @@ struct GatewayFrame: Codable, Sendable {
     var hasDocument: Bool?
     var agentPresetDefault: String?
     var permissionDefault: String?
+    var newSessionId: String?
     var target: String?
     var value: String?
     var applied: Bool?
@@ -417,6 +418,46 @@ struct GatewaySessionPermissions: Codable, Hashable, Sendable {
     var preset: String? = nil
     var sandbox: String? = nil
     var approval: String? = nil
+}
+
+/// `session/queue` 快照中的一条待处理收件箱消息（直连 mux 推送）。
+struct GatewayQueueItem: Codable, Hashable, Sendable, Identifiable {
+    var id: String
+    var placement: String?
+    var message: GatewayQueueMessage?
+
+    var text: String { message?.text ?? "" }
+}
+
+struct GatewayQueueMessage: Codable, Hashable, Sendable {
+    var content: [GatewayQueueContent]?
+
+    var text: String {
+        (content ?? []).compactMap(\.text).filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+}
+
+struct GatewayQueueContent: Codable, Hashable, Sendable {
+    var type: String?
+    var text: String?
+}
+
+/// `session.updateQueue` 的动作，与 harness 的 QueueAction 判别联合一一对应。
+enum DshQueueAction: Hashable, Sendable {
+    case edit(text: String)
+    case remove
+    case steer
+}
+
+/// `subagent.list` 目录行（child / diagnostic 两种 kind）。
+struct GatewaySubagentEntry: Codable, Hashable, Identifiable, Sendable {
+    var kind: String?
+    var id: String
+    var activity: String?
+    var hasChildren: Bool?
+    var mode: String?
+    var label: String?
+    var reason: String?
 }
 
 struct GatewayTokenUsage: Codable, Hashable, Sendable {

@@ -134,11 +134,13 @@ private struct ConversationNavigationHeader: Hashable {
 /// Owns only navigation chrome. The content below it may observe the complete
 /// app store and update at WebSocket frequency without invalidating the toolbar.
 private struct ConversationNavigationShell<Content: View>: View {
+    @EnvironmentObject private var store: AppStore
     let header: ConversationNavigationHeader
     let gateway: GatewayClient
     let onReloadHistory: () -> Void
     let onPing: () -> Void
     let onActivate: () async -> Void
+    @State private var showsSubagentSheet = false
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -171,9 +173,35 @@ private struct ConversationNavigationShell<Content: View>: View {
                     Menu {
                         Button("重新加载历史", systemImage: "clock.arrow.circlepath", action: onReloadHistory)
                         Button("发送 Ping", systemImage: "wave.3.right", action: onPing)
+                        Divider()
+                        Button {
+                            if let id = header.sessionID ?? store.selectedSessionId {
+                                store.exportSession(id)
+                            }
+                        } label: {
+                            Label(store.isExportingSession ? "正在导出…" : "导出会话 (ZIP)", systemImage: "square.and.arrow.up")
+                        }
+                        .disabled(store.isExportingSession || (header.sessionID ?? store.selectedSessionId) == nil)
+                        Button {
+                            showsSubagentSheet = true
+                        } label: {
+                            Label("子代理", systemImage: "square.stack.3d.up")
+                        }
                     } label: {
                         Image(systemName: "ellipsis")
                     }
+                }
+            }
+            .sheet(isPresented: $showsSubagentSheet) {
+                SubagentSheet()
+            }
+            .sheet(isPresented: Binding(
+                get: { store.sessionExportURL != nil },
+                set: { if !$0 { store.sessionExportURL = nil } }
+            )) {
+                if let url = store.sessionExportURL {
+                    ActivityViewRepresentable(items: [url])
+                        .ignoresSafeArea()
                 }
             }
             .task(id: header.sessionID ?? "__new-conversation__") {
