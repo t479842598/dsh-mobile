@@ -1,9 +1,10 @@
 ---
-spec: '03-00-dsh-web-direct-connect'
-scene: '00-default'
-status: in-progress
+spec: 03-00-dsh-web-direct-connect
+scene: 00-default
+status: completed
 priority: P0
 created: '2026-08-23'
+updated: '2026-08-29'
 ---
 
 # 03-00 Dsh Web Direct Connect - 需求
