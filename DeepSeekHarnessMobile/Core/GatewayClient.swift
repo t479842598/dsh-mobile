@@ -48,17 +48,6 @@ class GatewayClient: ObservableObject {
         beginConnection(to: rawEndpoint, pairingCode: nil, resetReportedFailure: true)
     }
 
-    /// Cold launch should only restore a connection for a device that has
-    /// already completed pairing. Opening an unauthenticated socket merely to
-    /// discover that pairing is required produces a misleading failure alert.
-    func hasStoredCredential(for rawEndpoint: String) -> Bool {
-        guard let url = URL(string: rawEndpoint),
-              ["ws", "wss"].contains(url.scheme?.lowercased() ?? "") else {
-            return false
-        }
-        return GatewayTokenStore.load(for: url)?.isEmpty == false
-    }
-
     func connectForPairing(_ payload: GatewayPairingPayload) {
         isRecoveringFromBackground = false
         beginConnection(to: payload.publicUrl, pairingCode: payload.pairingCode, resetReportedFailure: true)

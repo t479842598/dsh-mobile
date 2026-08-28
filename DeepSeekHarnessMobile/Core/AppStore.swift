@@ -255,13 +255,13 @@ final class AppStore: ObservableObject {
         return DshDirectCredentialStore.load(baseURL: base).password != nil
     }
 
-    /// Restores a previously paired gateway without turning the initial,
-    /// intentionally unpaired state into a transport error.
+    /// 冷启动仅在已保存直连凭据时自动恢复连接；未配置过时给引导提示，
+    /// 而不是把首次启动变成一条「连接失败」报错。
     func connectOnColdLaunchIfPaired() {
         guard !hasHandledColdLaunchConnection else { return }
         hasHandledColdLaunchConnection = true
-        guard gateway.hasStoredCredential(for: endpoint) else {
-            lastError = "尚未连接到 DeepSeek Harness。请点击主页右上角的 🔑 按钮，扫描配对二维码或手动输入 Token 进行连接。"
+        guard directHasStoredCredentials else {
+            lastError = "尚未连接 DeepSeek Harness。请前往「设置 → 直连网页端」填写地址与账号密码后连接。"
             return
         }
         connect()
