@@ -503,4 +503,56 @@ final class DshDirectConnectTests: XCTestCase {
         let bad = try json(#"{"attachment": {"attachmentId": "att-1"}, "data": "aGVsbG8="}"#)
         XCTAssertNil(DirectFrameTranslator.attachmentFrame(from: bad, sessionId: "s-1"))
     }
+
+    // MARK: - 直连功能迁移（权限切换 / 队列 / 子代理）
+
+    /// ADR-0002：commands/execute 的 args 必须显式携带 images（空数组也要传），
+    /// 否则 harness 返回 arguments-invalid missing "images"。
+    func testTypertExecutePayloadCarriesRequiredImagesField() throws {
+        let payload = DirectFrameTranslator.typertExecutePayload(line: "/permission read-only", agentId: "session-9")
+        let args = try XCTUnwrap(payload["args"]?.objectValue)
+        XCTAssertEqual(args["agentId"]?.stringValue, "session-9")
+        XCTAssertEqual(args["line"]?.stringValue, "/permission read-only")
+        XCTAssertEqual(args["images"]?.arrayValue, [], "images 必须存在且为空数组")
+        // payload 必须恰含一个 args 对象字段（Typert 网关约束）。
+        XCTAssertEqual(payload.objectValue?.count, 1)
+    }
+
+    func testQueueActionPayloadDiscriminators() throws {
+        let edit = DirectFrameTranslator.queueActionPayload(.edit(text: "改后的内容"))
+        XCTAssertEqual(edit["kind"]?.stringValue, "edit")
+        XCTAssertEqual(edit["content"]?.arrayValue?.first?["text"]?.stringValue, "改后的内容")
+
+        let remove = DirectFrameTranslator.queueActionPayload(.remove)
+        XCTAssertEqual(remove["kind"]?.stringValue, "remove")
+        XCTAssertNil(remove["content"])
+
+        let steer = DirectFrameTranslator.queueActionPayload(.steer)
+        XCTAssertEqual(steer["kind"]?.stringValue, "steer")
+    }
+
+    func testQueueInboxSnapshotDecodes() throws {
+        let data = try json(#"""
+        {"id": "msg-1", "placement": "queued",
+         "message": {"content": [{"type": "text", "text": "排队中的消息"}]}}
+        """#)
+        let item = try XCTUnwrap(data.decode(GatewayQueueItem.self))
+        XCTAssertEqual(item.id, "msg-1")
+        XCTAssertEqual(item.placement, "queued")
+        XCTAssertEqual(item.text, "排队中的消息")
+    }
+
+    func testSubagentEntryDecodesChildAndDiagnostic() throws {
+        let child = try json(#"{"kind":"child","id":"session-c1","activity":"running","hasChildren":false,"mode":"continuable","label":"审查子代理"}"#)
+        let entry = try XCTUnwrap(child.decode(GatewaySubagentEntry.self))
+        XCTAssertEqual(entry.id, "session-c1")
+        XCTAssertEqual(entry.mode, "continuable")
+        XCTAssertEqual(entry.activity, "running")
+        XCTAssertEqual(entry.label, "审查子代理")
+
+        let diagnostic = try json(#"{"kind":"diagnostic","id":"session-c2","reason":"corrupt"}"#)
+        let broken = try XCTUnwrap(diagnostic.decode(GatewaySubagentEntry.self))
+        XCTAssertEqual(broken.kind, "diagnostic")
+        XCTAssertEqual(broken.reason, "corrupt")
+    }
 }

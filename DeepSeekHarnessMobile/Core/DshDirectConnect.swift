@@ -431,6 +431,31 @@ enum DirectFrameTranslator {
     }
 
     // RPC 业务错误 → error 帧（requestType 用于 AppStore 收敛对应的 loading 态）
+    // Typert commands/execute 信封 payload（ADR-0002）：args 必须含 images
+    //（新版 descriptor 必填，空数组也必须显式携带）。
+    static func typertExecutePayload(line: String, agentId: String) -> JSONValue {
+        .object(["args": .object([
+            "agentId": .string(agentId),
+            "line": .string(line),
+            "images": .array([])
+        ])])
+    }
+
+    // session.updateQueue 的 action 判别联合（edit 携带纯文本 content）。
+    static func queueActionPayload(_ action: DshQueueAction) -> JSONValue {
+        switch action {
+        case .edit(let text):
+            return .object([
+                "kind": .string("edit"),
+                "content": .array([.object(["type": .string("text"), "text": .string(text)])])
+            ])
+        case .remove:
+            return .object(["kind": .string("remove")])
+        case .steer:
+            return .object(["kind": .string("steer")])
+        }
+    }
+
     static func errorFrame(
         code: String,
         message: String,
@@ -709,22 +734,12 @@ final class DshDirectClient: GatewayClient {
     /// - Parameters:
     ///   - action: `.edit(text)` / `.remove` / `.steer`
     func updateQueueItem(sessionId: String, itemId: String, action: DshQueueAction) {
-        var payload: [String: JSONValue] = [
+        let payload: JSONValue = .object([
             "sessionId": .string(sessionId),
-            "itemId": .string(itemId)
-        ]
-        switch action {
-        case .edit(let text):
-            payload["action"] = .object([
-                "kind": .string("edit"),
-                "content": .array([.object(["type": .string("text"), "text": .string(text)])])
-            ])
-        case .remove:
-            payload["action"] = .object(["kind": .string("remove")])
-        case .steer:
-            payload["action"] = .object(["kind": .string("steer")])
-        }
-        runRPC(method: "session.updateQueue", payload: .object(payload), requestType: "queue-update") { _ in
+            "itemId": .string(itemId),
+            "action": DirectFrameTranslator.queueActionPayload(action)
+        ])
+        runRPC(method: "session.updateQueue", payload: payload, requestType: "queue-update") { _ in
             // session/queue 快照会随后到达并收敛 UI；此处仅确认。
             return GatewayFrame(kind: "queue-ack", sessionId: sessionId)
         }
@@ -1423,11 +1438,7 @@ final class DshDirectClient: GatewayClient {
             do {
                 let value = try await self.call(
                     "commands/execute",
-                    .object(["args": .object([
-                        "agentId": .string(agentId),
-                        "line": .string(line),
-                        "images": .array([])
-                    ])])
+                    DirectFrameTranslator.typertExecutePayload(line: line, agentId: agentId)
                 )
                 if let frame = translate(value) { self.emit(frame) }
             } catch let error as RPCBusinessError {

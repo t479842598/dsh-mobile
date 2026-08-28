@@ -158,13 +158,12 @@ App 采用轻量的**单向数据流 + 集中式 Store** 模式（近似 MVVM，
 当前网关协议（v0.1.6 起）已支持：`workspaces`、`sessions`、分页 `history`、`search`、`host`、`directories`、`workspace-create`，以及模型/权限/上下文用量/会话统计等查询接口。
 
 尚未覆盖 Web UI 的写操作能力（后续演进方向）：
-- 会话取消、Approval 审批应答、Plan 审阅（直连模式已支持提问/审批应答与取消）
-- 队列编辑（queue/steer 模式的精细控制）、附件上传（直连模式支持会话内图片发送与加载）
-- 会话重命名/Fork/归档（直连模式支持重命名；Fork/归档待补）
-- 鉴权的远程访问（直连模式已支持：dsh-passwords 账密登录 + 公网域名 https/wss）
+- 附件上传（直连模式支持会话内图片发送与加载；非图片文件待补）
 - 桥接模式默认局域网直连 `ws://`，无认证层
 
-直连模式当前未覆盖的 WebUI 能力：部署默认配置写操作（默认 Agent/模型/权限）、权限预设切换、队列编辑、Fork/归档、子代理与会话导出等——对应 RPC 方法返回明确错误并提示前往 WebUI 操作，不崩溃。
+直连模式已覆盖的 WebUI 能力（v1.4.0）：提问/审批应答与取消、会话取消（`session.cancel`）、会话重命名/Fork/归档（`session.rename`/`session.fork`/`workspace.archiveSession`）、队列编辑（`session/queue` 快照 + `session.updateQueue`）、子代理（`subagent.*`）、会话导出（`GET /api/session.export`，ZIP）、目录创建（`host.createDirectory`）、会话级权限切换（Typert `POST /api/commands/execute`，`/permission <preset>`，`images` 必填，见 ADR-0002）、部署默认配置写操作（`settings.replace`，受 PRIVILEGED 限制：远程 403 时提示前往 WebUI）。
+
+仍未覆盖：自定义 Agent 预设的创建/编辑（`agentPreset.read/copy/remove` 为 PRIVILEGED）、APNs 远程推送、中英双语本地化。
 
 ## 8. 测试
 
