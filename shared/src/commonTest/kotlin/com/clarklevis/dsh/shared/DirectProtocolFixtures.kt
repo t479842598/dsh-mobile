@@ -63,7 +63,7 @@ object DirectProtocolFixtures {
 
     /** 持久事件 `tool/result`（真实）。长文本已截断。 */
     val ENTRY_TOOL_RESULT: String = listOf(
-            "{\"type\":\"event\",\"event\":{\"type\":\"tool/result\",\"seq\":756,\"time\":1789478169786,\"data\":{\"turn\":6,\"step\":33,\"message\":{\"source\":{\"kind\":\"tool\",\"callId\":\"call_00_ET_tf6sBwLy8KZchOd6qujy5361\"},\"content\":[{\"type\":\"tool-result\",\"toolCallId\":\"call_00_ET_tf6sBwLy8KZchOd6qujy5361\",\"content\":[{\"type\":\"text\",\"text\":\"已后台启动 PID=32173\\n--- 前 12 行 ---\\n[handshake] HTTP 101\\n  upgrade            = websocket\\n  connection         = Upgrade\\n  sec-websocket-acc  = hjMrXmTbNDuzmK6K…\\n\\n[open] mux 已连通，开始开逻辑流\\n\\n>> open $events  streamId=ev\\n   payload…<truncated>\"}],\"isError\":false}],\"role\":\"user\",\"id\":\"90b378ee-c2ba-4477-bcb2-6434a75ee1d5\"}},\"sourceEventSeqs\":[755],\"surfaceOp\":\"append\"}}"
+            "{\"type\":\"event\",\"event\":{\"type\":\"tool/result\",\"seq\":756,\"time\":1789478169786,\"data\":{\"turn\":6,\"step\":33,\"message\":{\"source\":{\"kind\":\"tool\",\"callId\":\"call_00_ET_tf6sBwLy8KZchOd6qujy5361\"},\"content\":[{\"type\":\"tool-result\",\"toolCallId\":\"call_00_ET_tf6sBwLy8KZchOd6qujy5361\",\"content\":[{\"type\":\"text\",\"text\":\"已后台启动 PID=32173\\n--- 前 12 行 ---\\n[handshake] HTTP 101\\n  upgrade            = websocket\\n  connection         = Upgrade\\n  sec-websocket-acc  = hjMrXmTbNDuzmK6K…\\n\\n[open] mux 已连通，开始开逻辑流\\n\\n>> open \$events  streamId=ev\\n   payload…<truncated>\"}],\"isError\":false}],\"role\":\"user\",\"id\":\"90b378ee-c2ba-4477-bcb2-6434a75ee1d5\"}},\"sourceEventSeqs\":[755],\"surfaceOp\":\"append\"}}"
     ).joinToString("\n")
 
     /** 持久事件 `assistant/message`（真实）。长文本已截断。 */
