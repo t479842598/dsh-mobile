@@ -5,6 +5,9 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -114,6 +117,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
@@ -156,6 +160,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -693,9 +698,18 @@ private fun ConversationTimeline(
         }
     }
     val hasInitialContent = timelineEntries.isNotEmpty()
+    // 运行态时 LazyColumn 尾部会追加一行“深度求索中…”状态行，计入尾索引以便跟尾时可见。
     val lastTimelineIndex = (
-        timelineEntries.lastIndex + if (hasHistoryLoadingRow) 1 else 0
+        timelineEntries.lastIndex + if (hasHistoryLoadingRow) 1 else 0 +
+            if (selectedSessionIsRunning) 1 else 0
     ).coerceAtLeast(0)
+    // 运行态转圈只落在最后一个过程组上（对齐网页版整轮级 running 语义）。
+    val lastProcessGroupId = remember(timelineEntries) {
+        timelineEntries.filterIsInstance<ConversationTimelineEntry.Display>()
+            .map { it.entry }
+            .filterIsInstance<ConversationDisplayEntry.Process>()
+            .lastOrNull()?.group?.id
+    }
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = lastTimelineIndex
     )
@@ -917,17 +931,18 @@ private fun ConversationTimeline(
                             thumbnails = stateHolder.attachmentThumbnails,
                             attachmentStates = stateHolder.attachmentStates,
                             onRetryAttachment = stateHolder::retryAttachment,
-                            onPreviewImages = onPreviewImages,
-                            isStreaming = display.item.id == activeStreamingMessageId
+                            onPreviewImages = onPreviewImages
                         )
-                        is ConversationDisplayEntry.Process -> ConversationProcessRow(display.group)
+                        is ConversationDisplayEntry.Process -> ConversationProcessRow(
+                            group = display.group,
+                            isRunning = selectedSessionIsRunning && display.group.id == lastProcessGroupId
+                        )
                     }
                     is ConversationTimelineEntry.AssistantHeader -> AssistantMessageHeader(
                         item = entry.item,
                         thumbnails = stateHolder.attachmentThumbnails,
                         states = stateHolder.attachmentStates,
-                        onRetry = stateHolder::retryAttachment,
-                        isStreaming = entry.item.id == activeStreamingMessageId
+                        onRetry = stateHolder::retryAttachment
                     )
                     is ConversationTimelineEntry.AssistantMarkdown -> DshLazyMarkdownText(
                         markdown = entry.markdown,
@@ -940,7 +955,104 @@ private fun ConversationTimeline(
                     }
                 }
             }
+            // 网页版同款整轮级状态行：运行全程常驻流底部，不按 step 闪烁。
+            if (selectedSessionIsRunning) {
+                item("turn-status") {
+                    TurnStatusRow(
+                        sessionId = selectedSessionId,
+                        isRunning = true,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    )
+                }
+            }
         }
+    }
+}
+
+/**
+ * 网页版同款整轮级状态行：“深度求索中…”品牌蓝扫光 + 15 秒后中文计时。
+ * 开始时间取本轮 running 翻转时刻（移动端无 turn/start 时间戳，与网页挂载时间兜底同义）。
+ */
+@Composable
+private fun TurnStatusRow(
+    sessionId: String?,
+    isRunning: Boolean,
+    modifier: Modifier = Modifier
+) {
+    var runStartMs by remember(sessionId) { mutableStateOf<Long?>(null) }
+    var nowMs by remember(sessionId) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(sessionId, isRunning) {
+        if (!isRunning) {
+            runStartMs = null
+            return@LaunchedEffect
+        }
+        if (runStartMs == null) runStartMs = System.currentTimeMillis()
+        while (true) {
+            delay(1_000)
+            nowMs = System.currentTimeMillis()
+        }
+    }
+    val shimmer = rememberInfiniteTransition(label = "turn-status-shimmer")
+    val shimmerX by shimmer.animateFloat(
+        initialValue = -300f,
+        targetValue = 1_200f,
+        animationSpec = infiniteRepeatable(animation = tween(1_800)),
+        label = "turn-status-shimmer-x"
+    )
+    val shimmerBrush = Brush.linearGradient(
+        colors = listOf(
+            DshColors.Ocean,
+            DshColors.Ocean,
+            DshColors.Ocean.copy(alpha = 0.25f),
+            DshColors.Ocean,
+            DshColors.Ocean
+        ),
+        start = Offset(shimmerX - 300f, 0f),
+        end = Offset(shimmerX, 0f)
+    )
+    val elapsed = runStartMs?.let { turnElapsedText(nowMs - it) }
+    Row(
+        modifier = modifier
+            .testTag("turn-status")
+            .semantics { contentDescription = "深度求索中" },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            "深度求索中…",
+            style = TextStyle(
+                brush = shimmerBrush,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                lineHeight = 22.sp
+            ),
+            maxLines = 1
+        )
+        if (elapsed != null) {
+            Text(
+                elapsed,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                fontSize = 13.sp,
+                maxLines = 1,
+                style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum")
+            )
+        }
+    }
+}
+
+/**
+ * 对齐网页 `formatRunDuration`：15 秒内不显示时钟；之后中文“X秒/X分Y秒/X时Y分Z秒”。
+ */
+internal fun turnElapsedText(elapsedMs: Long): String? {
+    if (elapsedMs < 15_000) return null
+    val totalSeconds = (elapsedMs / 1_000).toInt().coerceAtLeast(0)
+    val hours = totalSeconds / 3_600
+    val minutes = (totalSeconds / 60) % 60
+    val seconds = totalSeconds % 60
+    return when {
+        hours > 0 -> String.format(Locale.US, "%d时%02d分%02d秒", hours, minutes, seconds)
+        minutes > 0 -> String.format(Locale.US, "%d分%02d秒", minutes, seconds)
+        else -> String.format(Locale.US, "%d秒", seconds)
     }
 }
 
@@ -1841,8 +1953,7 @@ private fun ConversationRow(
     thumbnails: Map<String, ImageBitmap>,
     attachmentStates: Map<String, AttachmentLoadState>,
     onRetryAttachment: (String) -> Unit,
-    onPreviewImages: (List<GatewayImageAttachment>, Int) -> Unit,
-    isStreaming: Boolean = false
+    onPreviewImages: (List<GatewayImageAttachment>, Int) -> Unit
 ) {
     when (item.kind) {
         ConversationItemKind.USER -> UserMessage(
@@ -1852,7 +1963,7 @@ private fun ConversationRow(
             onRetryAttachment,
             onPreviewImages
         )
-        ConversationItemKind.ASSISTANT -> AssistantMessage(item, thumbnails, attachmentStates, onRetryAttachment, isStreaming)
+        ConversationItemKind.ASSISTANT -> AssistantMessage(item, thumbnails, attachmentStates, onRetryAttachment)
         ConversationItemKind.STATUS -> StatusRow(item)
         ConversationItemKind.SYSTEM -> SystemRow(item)
         else -> Unit
@@ -1860,7 +1971,10 @@ private fun ConversationRow(
 }
 
 @Composable
-private fun ConversationProcessRow(group: ConversationProcessGroup) {
+private fun ConversationProcessRow(
+    group: ConversationProcessGroup,
+    isRunning: Boolean = false
+) {
     var expanded by remember(group.id) { mutableStateOf(false) }
     val command = group.command
     val commandColor = if (command?.isError == true) {
@@ -1868,7 +1982,7 @@ private fun ConversationProcessRow(group: ConversationProcessGroup) {
     } else {
         MaterialTheme.colorScheme.onSurface
     }
-    Column(Modifier.fillMaxWidth().padding(vertical = 7.dp)) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().clickable(enabled = group.isExpandable) {
                 expanded = !expanded
@@ -1909,7 +2023,7 @@ private fun ConversationProcessRow(group: ConversationProcessGroup) {
                 )
             } else {
                 Text(
-                    group.title,
+                    processCountLabel(group),
                     modifier = Modifier.weight(1f),
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
                     fontSize = 14.sp,
@@ -1918,12 +2032,19 @@ private fun ConversationProcessRow(group: ConversationProcessGroup) {
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            if (isRunning) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp).testTag("process-running-indicator"),
+                    strokeWidth = 2.dp,
+                    color = DshColors.Ocean
+                )
+            }
             if (group.isExpandable) ProcessChevron(expanded)
         }
         if (expanded && group.isExpandable) {
             Column(
                 modifier = Modifier.padding(start = 2.dp, top = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 if (command != null && group.commandHasDetailedText) {
                     Box(
@@ -1958,11 +2079,20 @@ private fun ConversationProcessRow(group: ConversationProcessGroup) {
             }
         }
         HorizontalDivider(
-            modifier = Modifier.padding(top = 7.dp),
+            modifier = Modifier.padding(top = 3.dp),
             thickness = 1.dp,
             color = Color.Gray.copy(alpha = 0.16f)
         )
     }
+}
+
+/** 无 command 的纯过程组折叠标题：对齐网页版 turn 级汇总口径，只计数不计时长。 */
+internal fun processCountLabel(group: ConversationProcessGroup): String {
+    val parts = buildList {
+        if (group.tools.isNotEmpty()) add("${group.tools.size} 次工具调用")
+        if (group.contexts.isNotEmpty()) add("${group.contexts.size} 项上下文")
+    }
+    return parts.joinToString(" · ").ifEmpty { group.title }
 }
 
 @Composable
@@ -2485,15 +2615,15 @@ private fun AssistantMessage(
     item: ConversationItem,
     thumbnails: Map<String, ImageBitmap>,
     states: Map<String, AttachmentLoadState>,
-    onRetry: (String) -> Unit,
-    isStreaming: Boolean = false
+    onRetry: (String) -> Unit
 ) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        AssistantMessageHeaderContent(item, thumbnails, states, onRetry, isStreaming)
+    // 对齐网页版：assistant 正文无图标无标题，直接排正文。
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        AttachmentGrid(item.images, thumbnails, states, onRetry)
         if (item.text.isNotEmpty()) {
             DshStreamingAwareMarkdownText(
                 markdown = item.text,
-                isStreaming = isStreaming,
+                isStreaming = false,
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -2506,42 +2636,14 @@ private fun AssistantMessageHeader(
     item: ConversationItem,
     thumbnails: Map<String, ImageBitmap>,
     states: Map<String, AttachmentLoadState>,
-    onRetry: (String) -> Unit,
-    isStreaming: Boolean = false
+    onRetry: (String) -> Unit
 ) {
     Column(
-        Modifier.fillMaxWidth().padding(top = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(7.dp)
+        Modifier.fillMaxWidth().padding(top = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        AssistantMessageHeaderContent(item, thumbnails, states, onRetry, isStreaming)
+        AttachmentGrid(item.images, thumbnails, states, onRetry)
     }
-}
-
-@Composable
-private fun AssistantMessageHeaderContent(
-    item: ConversationItem,
-    thumbnails: Map<String, ImageBitmap>,
-    states: Map<String, AttachmentLoadState>,
-    onRetry: (String) -> Unit,
-    isStreaming: Boolean = false
-) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        WhaleIcon(Modifier.width(26.dp).height(20.dp))
-        Text(
-            item.title,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold
-        )
-        if (isStreaming) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(16.dp).testTag("assistant-streaming-indicator"),
-                strokeWidth = 2.dp,
-                color = DshColors.Ocean
-            )
-        }
-    }
-    AttachmentGrid(item.images, thumbnails, states, onRetry)
 }
 
 @Composable
