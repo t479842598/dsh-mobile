@@ -1,7 +1,37 @@
 # 更新日志
 
-本文件记录 dsh-mobile（DeepSeek Harness iOS 客户端）的版本变更。
+本文件记录 dsh-mobile（DeepSeek Harness 移动客户端：iOS / Android）的版本变更。
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循语义化版本。
+
+## [1.5.2] - 2026-09-15
+
+把上游 KMM 重构线以**纯新增**方式并入发布线：Android 客户端与共享层落地，并补齐此前
+完全缺失的 Android 流水线。**本版 iOS 构建内容保持 1.4.0 不变**（Swift 目录零改动）。
+
+### 新增
+
+- **Android 客户端**（`androidApp/`，Compose）：与 iOS 对齐的工作区/会话管理、实时流式
+  对话、Agent 轨迹、模型与预设选择，以及多网关管理、附件与图片处理。
+- **共享层**（`shared/`，Kotlin Multiplatform）：会话、轨迹、工作区、斜杠命令等状态与
+  协议实现，供 Android 复用并可产出 iOS framework。
+- **直连协议实现**：`DirectWire`（消息构造与信封约束）、`DirectProtocol`（mux/follow 解析、
+  严格键校验、revision 连续性、格式版本协商），fixture 由真实抓包固化，记录见
+  `Docs/direct-protocol-rc1.md`。
+- **CI**：`android-apk.yml`（JDK 17 + SDK 36，`assembleRelease` 产出可安装 APK 并附
+  sha256）、`ci-shared.yml`（共享层单测 + iOS Simulator framework 链接）。此前上游与
+  发布线均无任何 Android 流水线，release 页的 APK 靠本地手工构建。
+- 文档：`Docs/mobile-client-plan.md`、`Docs/upstream-sync-checklist.md`。
+
+### 变更
+
+- `.gitignore` 补 Gradle/Android 本地产物忽略（`.gradle/`、`.kotlin/`、`local.properties`、
+  `*.iml`、`captures/` 等）。
+
+### 说明
+
+- 本 tag 的 GitHub Release 资产仍只含 iOS `.ipa`（由 `ci.yml` 的 `tags: ['v*']` 触发）；
+  Android APK 作为 Actions 构件产出，需从工作流运行页下载。
+- 两端版本号暂不一致：Android `1.5.2`(11) / iOS `1.4.0`(7)。
 
 ## [1.4.0] - 2026-08-29
 
