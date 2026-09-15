@@ -1,0 +1,76 @@
+name: CI (shared)
+
+# 本分支基于上游 main，上游没有 CI；fork 的 ci.yml 只构建 iOS 且仅在 main/tag 触发。
+# 这份工作流补上「共享层的编译与单测」这一此前完全缺失的信号：
+# 只测壳不打共享层，Kotlin 侧的编译错误会一路漏到集成阶段。
+on:
+  push:
+    branches:
+      - main
+      - 'work/**'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-shared-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shared-android-tests:
+    name: shared 单测（Android/JVM）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装 Android SDK 平台
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-36 build-tools;36.0.0'
+
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'gradle/libs.versions.toml', '**/build.gradle.kts') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: 共享层单测
+        run: ./gradlew :shared:allTests --no-daemon --stacktrace
+
+      - name: 单测报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shared-test-reports
+          path: shared/build/reports/tests/
+          if-no-files-found: ignore
+
+  shared-ios-framework:
+    name: shared 单测与 framework（iOS Simulator）
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-ios-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'gradle/libs.versions.toml', '**/build.gradle.kts') }}
+          restore-keys: gradle-ios-${{ runner.os }}-
+
+      - name: iOS Simulator 单测
+        run: ./gradlew :shared:iosSimulatorArm64Test --no-daemon --stacktrace
+
+      - name: 链接 iOS Simulator framework
+        run: ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64 --no-daemon --stacktrace
