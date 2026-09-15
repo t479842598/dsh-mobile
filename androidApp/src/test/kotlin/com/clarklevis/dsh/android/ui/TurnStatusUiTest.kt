@@ -1,5 +1,7 @@
 package com.clarklevis.dsh.android.ui
 
+import com.clarklevis.dsh.shared.projection.ConversationItem
+import com.clarklevis.dsh.shared.projection.ConversationItemKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -33,5 +35,23 @@ class TurnStatusUiTest {
             "latest line",
             reasoningPreview("first **bold** line\n  latest line  \n", running = true)
         )
+    }
+
+    @Test
+    fun `consecutive reasoning merges into one run split by tools`() {
+        val group = ConversationProcessGroup(
+            id = "process-1",
+            items = listOf(
+                ConversationItem(id = "r1", kind = ConversationItemKind.REASONING, title = "Think", text = "a"),
+                ConversationItem(id = "r2", kind = ConversationItemKind.REASONING, title = "Think", text = "b"),
+                ConversationItem(id = "t1", kind = ConversationItemKind.TOOL, title = "Bash", text = "{}"),
+                ConversationItem(id = "r3", kind = ConversationItemKind.REASONING, title = "Think", text = "c")
+            )
+        )
+
+        val runs = group.reasoningRuns
+        assertEquals(2, runs.size)
+        assertEquals(listOf("r1", "r2"), runs[0].map { it.id })
+        assertEquals(listOf("r3"), runs[1].map { it.id })
     }
 }

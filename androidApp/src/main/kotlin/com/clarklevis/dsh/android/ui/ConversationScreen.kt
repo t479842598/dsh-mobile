@@ -2012,8 +2012,8 @@ private fun ConversationProcessRow(
     } else {
         MaterialTheme.colorScheme.onSurface
     }
-    // 思考与工具拆为独立行：思考逐条直接展示，工具在下方按个数折叠（对齐网页版）。
-    val reasoningItems = group.reasoningItems
+    // 思考与工具拆为独立行：连续思考并成一段只占一行，工具在下方按个数折叠（对齐网页版）。
+    val reasoningRuns = group.reasoningRuns
     Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
         if (command != null) {
             ProcessCommandRow(
@@ -2025,17 +2025,18 @@ private fun ConversationProcessRow(
         } else {
             group.contexts.forEach { ProcessContextDisclosure(it) }
         }
-        reasoningItems.forEachIndexed { index, item ->
+        reasoningRuns.forEachIndexed { index, run ->
             ProcessReasoningDisclosure(
-                item = item,
-                running = isRunning && index == reasoningItems.lastIndex
+                runId = run.first().id,
+                text = run.joinToString("\n\n", transform = ConversationItem::text),
+                running = isRunning && index == reasoningRuns.lastIndex
             )
         }
         if (group.tools.isNotEmpty()) {
             ProcessToolBundle(
                 groupId = group.id,
                 tools = group.tools,
-                isRunning = isRunning && reasoningItems.isEmpty()
+                isRunning = isRunning && reasoningRuns.isEmpty()
             )
         }
         HorizontalDivider(
@@ -2147,16 +2148,16 @@ private fun ProcessContextDisclosure(item: ConversationItem) {
 }
 
 @Composable
-private fun ProcessReasoningDisclosure(item: ConversationItem, running: Boolean) {
+private fun ProcessReasoningDisclosure(runId: String, text: String, running: Boolean) {
     ProcessDisclosure(
-        id = "reasoning-${item.id}",
+        id = "reasoning-$runId",
         title = "思考",
-        preview = reasoningPreview(item.text, running),
+        preview = reasoningPreview(text, running),
         iconRes = R.drawable.ic_dsh_think,
         tint = DshColors.Purple,
         showRunning = running
     ) {
-        DshMarkdownText(item.text, Modifier.fillMaxWidth(), compact = true)
+        DshMarkdownText(text, Modifier.fillMaxWidth(), compact = true)
     }
 }
 

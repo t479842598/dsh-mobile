@@ -191,8 +191,24 @@ internal data class ConversationProcessGroup(
 
     val contexts: List<ConversationItem> = detailItems.filter { it.kind == ConversationItemKind.CONTEXT }
 
-    val reasoningItems: List<ConversationItem> =
-        detailItems.filter { it.kind == ConversationItemKind.REASONING }
+    /**
+     * 按事件原始顺序把连续的思考并成段：一段 = 一次工具调用之前的全部思考，
+     * 展示时一段只占一行。中间隔了工具/上下文的自然断成多段。
+     */
+    val reasoningRuns: List<List<ConversationItem>> = buildList {
+        var current = mutableListOf<ConversationItem>()
+        fun flush() {
+            if (current.isNotEmpty()) {
+                add(current.toList())
+                current = mutableListOf()
+            }
+        }
+        detailItems.forEach { item ->
+            if (item.kind == ConversationItemKind.REASONING) current += item
+            else flush()
+        }
+        flush()
+    }
 
     val reasoningText: String = detailItems.asSequence()
         .filter { it.kind == ConversationItemKind.REASONING }
