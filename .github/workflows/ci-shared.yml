@@ -44,7 +44,7 @@ jobs:
           restore-keys: gradle-${{ runner.os }}-
 
       - name: 共享层单测
-        run: ./gradlew :shared:testDebugUnitTest --no-daemon --stacktrace
+        run: ./gradlew :shared:allTests --no-daemon --stacktrace
 
       - name: 单测报告
         if: always()
@@ -55,7 +55,7 @@ jobs:
           if-no-files-found: ignore
 
   shared-ios-framework:
-    name: shared framework（iOS Simulator）
+    name: shared 单测与 framework（iOS Simulator）
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +68,9 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-ios-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'gradle/libs.versions.toml', '**/build.gradle.kts') }}
           restore-keys: gradle-ios-${{ runner.os }}-
+
+      - name: iOS Simulator 单测
+        run: ./gradlew :shared:iosSimulatorArm64Test --no-daemon --stacktrace
 
       - name: 链接 iOS Simulator framework
         run: ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64 --no-daemon --stacktrace
