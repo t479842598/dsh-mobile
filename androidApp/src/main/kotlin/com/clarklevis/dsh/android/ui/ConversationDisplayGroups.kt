@@ -191,6 +191,9 @@ internal data class ConversationProcessGroup(
 
     val contexts: List<ConversationItem> = detailItems.filter { it.kind == ConversationItemKind.CONTEXT }
 
+    val reasoningItems: List<ConversationItem> =
+        detailItems.filter { it.kind == ConversationItemKind.REASONING }
+
     val reasoningText: String = detailItems.asSequence()
         .filter { it.kind == ConversationItemKind.REASONING }
         .map(ConversationItem::text)

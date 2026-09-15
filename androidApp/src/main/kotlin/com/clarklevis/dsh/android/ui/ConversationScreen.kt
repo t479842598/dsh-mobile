@@ -820,6 +820,23 @@ private fun ConversationTimeline(
             }
         }
     }
+    // 短列表滑不动时顶部手势永远触发不了，旧记录会 unreachable；内容铺不满一屏时自动续取。
+    LaunchedEffect(
+        stateHolder.snapshot.selectedHistoryHasMore,
+        stateHolder.snapshot.selectedHistoryIsLoading,
+        timelineEntries.size,
+        listState.canScrollBackward,
+        listState.canScrollForward
+    ) {
+        if (stateHolder.snapshot.selectedHistoryHasMore &&
+            !stateHolder.snapshot.selectedHistoryIsLoading &&
+            timelineEntries.isNotEmpty() &&
+            !listState.canScrollBackward &&
+            !listState.canScrollForward
+        ) {
+            stateHolder.loadOlderHistory()
+        }
+    }
     LaunchedEffect(listState, initialPositionApplied) {
         if (!initialPositionApplied) return@LaunchedEffect
         snapshotFlow {
@@ -910,6 +927,20 @@ private fun ConversationTimeline(
                 bottom = bottomContentHeight + 22.dp
             )
         ) {
+            if (stateHolder.snapshot.selectedHistoryHasMore && !stateHolder.snapshot.selectedHistoryIsLoading) {
+                item("history-more") {
+                    TextButton(
+                        onClick = stateHolder::loadOlderHistory,
+                        modifier = Modifier.fillMaxWidth().testTag("history-more")
+                    ) {
+                        Text(
+                            "加载更早记录",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
+                        )
+                    }
+                }
+            }
             if (hasHistoryLoadingRow) {
                 item("history-loading") {
                     Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1975,78 +2006,99 @@ private fun ConversationProcessRow(
     group: ConversationProcessGroup,
     isRunning: Boolean = false
 ) {
-    var expanded by remember(group.id) { mutableStateOf(false) }
     val command = group.command
     val commandColor = if (command?.isError == true) {
         MaterialTheme.colorScheme.error
     } else {
         MaterialTheme.colorScheme.onSurface
     }
+    // 思考与工具拆为独立行：思考逐条直接展示，工具在下方按个数折叠（对齐网页版）。
+    val reasoningItems = group.reasoningItems
     Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        if (command != null) {
+            ProcessCommandRow(
+                command = command,
+                commandColor = commandColor,
+                detailedText = command.text.takeIf { group.commandHasDetailedText },
+                contexts = group.contexts
+            )
+        } else {
+            group.contexts.forEach { ProcessContextDisclosure(it) }
+        }
+        reasoningItems.forEachIndexed { index, item ->
+            ProcessReasoningDisclosure(
+                item = item,
+                running = isRunning && index == reasoningItems.lastIndex
+            )
+        }
+        if (group.tools.isNotEmpty()) {
+            ProcessToolBundle(
+                groupId = group.id,
+                tools = group.tools,
+                isRunning = isRunning && reasoningItems.isEmpty()
+            )
+        }
+        HorizontalDivider(
+            modifier = Modifier.padding(top = 3.dp),
+            thickness = 1.dp,
+            color = Color.Gray.copy(alpha = 0.16f)
+        )
+    }
+}
+
+@Composable
+private fun ProcessCommandRow(
+    command: ConversationItem,
+    commandColor: Color,
+    detailedText: String?,
+    contexts: List<ConversationItem>
+) {
+    var expanded by remember(command.id) { mutableStateOf(false) }
+    val expandable = detailedText != null || contexts.isNotEmpty()
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Row(
-            modifier = Modifier.fillMaxWidth().clickable(enabled = group.isExpandable) {
-                expanded = !expanded
+            modifier = Modifier.fillMaxWidth().clickable(enabled = expandable) {
+                if (expandable) expanded = !expanded
             },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
-            if (command != null) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_command_status),
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = if (command.isError) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
-                )
-            }
-            if (command != null) {
-                Text(
-                    command.title,
-                    color = commandColor,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1
-                )
-                Text(
-                    "·",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
-                    fontSize = 14.sp
-                )
-                Text(
-                    command.text.singleLinePreview(),
-                    modifier = Modifier.weight(1f),
-                    color = if (command.isError) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            } else {
-                Text(
-                    processCountLabel(group),
-                    modifier = Modifier.weight(1f),
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (isRunning) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp).testTag("process-running-indicator"),
-                    strokeWidth = 2.dp,
-                    color = DshColors.Ocean
-                )
-            }
-            if (group.isExpandable) ProcessChevron(expanded)
+            Icon(
+                painter = painterResource(R.drawable.ic_command_status),
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = if (command.isError) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
+            )
+            Text(
+                command.title,
+                color = commandColor,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1
+            )
+            Text(
+                "·",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f),
+                fontSize = 14.sp
+            )
+            Text(
+                command.text.singleLinePreview(),
+                modifier = Modifier.weight(1f),
+                color = if (command.isError) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f),
+                fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (expandable) ProcessChevron(expanded)
         }
-        if (expanded && group.isExpandable) {
+        if (expanded && expandable) {
             Column(
                 modifier = Modifier.padding(start = 2.dp, top = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                if (command != null && group.commandHasDetailedText) {
+                if (detailedText != null) {
                     Box(
                         Modifier.fillMaxWidth()
                             .background(
@@ -2061,7 +2113,7 @@ private fun ConversationProcessRow(
                             .padding(horizontal = 14.dp, vertical = 12.dp)
                     ) {
                         Text(
-                            command.text,
+                            detailedText,
                             color = commandColor,
                             fontSize = 13.sp,
                             lineHeight = 19.sp,
@@ -2069,30 +2121,16 @@ private fun ConversationProcessRow(
                         )
                     }
                 }
-                group.contexts.forEach { ProcessContextDisclosure(it) }
-                if (group.reasoningText.isNotEmpty()) {
-                    ProcessReasoningDisclosure(group.id, group.reasoningText)
-                }
-                if (group.tools.isNotEmpty()) {
-                    ProcessToolBundle(group.id, group.tools)
-                }
+                contexts.forEach { ProcessContextDisclosure(it) }
             }
         }
-        HorizontalDivider(
-            modifier = Modifier.padding(top = 3.dp),
-            thickness = 1.dp,
-            color = Color.Gray.copy(alpha = 0.16f)
-        )
     }
 }
 
-/** 无 command 的纯过程组折叠标题：对齐网页版 turn 级汇总口径，只计数不计时长。 */
-internal fun processCountLabel(group: ConversationProcessGroup): String {
-    val parts = buildList {
-        if (group.tools.isNotEmpty()) add("${group.tools.size} 次工具调用")
-        if (group.contexts.isNotEmpty()) add("${group.contexts.size} 项上下文")
-    }
-    return parts.joinToString(" · ").ifEmpty { group.title }
+/** 对齐网页版思考行：完成后取首行概览，运行中尾随最新一行。 */
+internal fun reasoningPreview(text: String, running: Boolean): String {
+    val line = if (running) text.trimEnd().substringAfterLast('\n') else text.substringBefore('\n')
+    return line.replace("**", "").replace(Regex("\\s+"), " ").trim()
 }
 
 @Composable
@@ -2109,35 +2147,34 @@ private fun ProcessContextDisclosure(item: ConversationItem) {
 }
 
 @Composable
-private fun ProcessReasoningDisclosure(groupId: String, text: String) {
+private fun ProcessReasoningDisclosure(item: ConversationItem, running: Boolean) {
     ProcessDisclosure(
-        id = "reasoning-$groupId",
-        title = "Think",
-        preview = text.singleLinePreview(),
+        id = "reasoning-${item.id}",
+        title = "思考",
+        preview = reasoningPreview(item.text, running),
         iconRes = R.drawable.ic_dsh_think,
-        tint = DshColors.Purple
+        tint = DshColors.Purple,
+        showRunning = running
     ) {
-        DshMarkdownText(text, Modifier.fillMaxWidth(), compact = true)
+        DshMarkdownText(item.text, Modifier.fillMaxWidth(), compact = true)
     }
 }
 
 @Composable
 private fun ProcessToolBundle(
     groupId: String,
-    tools: List<ConversationProcessTool>
+    tools: List<ConversationProcessTool>,
+    isRunning: Boolean = false
 ) {
     val names = tools.mapNotNull { it.call?.title }.take(2)
-    val title = when {
-        names.isEmpty() -> "查看 ${tools.size} 个工具结果"
-        else -> "使用了 ${names.joinToString("、")}${if (tools.size > 2) " 等工具" else ""}"
-    }
     ProcessDisclosure(
         id = "tools-$groupId",
-        title = title,
-        preview = "",
+        title = "${tools.size} 次工具调用",
+        preview = names.joinToString("、"),
         iconRes = R.drawable.ic_process_tool,
         tint = DshColors.Orange,
-        bodyStartPadding = 14.dp
+        bodyStartPadding = 14.dp,
+        showRunning = isRunning
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             tools.forEach { ProcessToolDisclosure(it) }
@@ -2200,6 +2237,7 @@ private fun ProcessDisclosure(
     tint: Color,
     bodyStartPadding: Dp = 26.dp,
     stackedPreview: Boolean = false,
+    showRunning: Boolean = false,
     content: @Composable () -> Unit
 ) {
     var expanded by remember(id) { mutableStateOf(false) }
@@ -2248,6 +2286,13 @@ private fun ProcessDisclosure(
                 } else {
                     Spacer(Modifier.weight(1f))
                 }
+            }
+            if (showRunning) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp).testTag("process-running-indicator"),
+                    strokeWidth = 2.dp,
+                    color = DshColors.Ocean
+                )
             }
             ProcessChevron(expanded)
         }
