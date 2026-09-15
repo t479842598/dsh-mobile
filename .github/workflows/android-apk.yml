@@ -20,6 +20,10 @@ concurrency:
   group: android-apk-${{ github.ref }}
   cancel-in-progress: true
 
+# 直链 APK 需要创建/更新 Release，写权限只给这个工作流。
+permissions:
+  contents: write
+
 env:
   ANDROID_HOME: /usr/local/lib/android/sdk
   ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -85,3 +89,18 @@ jobs:
             apk.sha256
           if-no-files-found: error
           retention-days: 14
+
+      # Artifacts 只能下到 zip。同步推一份裸 APK 到常驻 Release，
+      # 手机浏览器直链下载即装，不用解压。PR 事件跳过（fork 无写权限）。
+      - name: Publish APK to floating release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-latest
+          name: Android 最新构建（直链 APK）
+          body: |
+            最新 Android 构建，手机浏览器直接下载 APK 覆盖安装即可（与 release 包同 debug 签名）。
+            分支：${{ github.ref_name }}，提交：${{ github.sha }}。
+          files: |
+            ${{ env.APK }}
+            apk.sha256
