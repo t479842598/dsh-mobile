@@ -192,8 +192,8 @@ internal data class ConversationProcessGroup(
     val contexts: List<ConversationItem> = detailItems.filter { it.kind == ConversationItemKind.CONTEXT }
 
     /**
-     * 按事件原始顺序把连续的思考并成段：一段 = 一次工具调用之前的全部思考，
-     * 展示时一段只占一行。中间隔了工具/上下文的自然断成多段。
+     * 按事件原始顺序把连续的思考切成段（工具/上下文自然断段）。
+     * 展示层把同组各段拼成一行；分段信息保留给以后真按时间交错排布时用。
      */
     val reasoningRuns: List<List<ConversationItem>> = buildList {
         var current = mutableListOf<ConversationItem>()

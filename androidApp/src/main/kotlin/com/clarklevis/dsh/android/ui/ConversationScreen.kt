@@ -2012,8 +2012,10 @@ private fun ConversationProcessRow(
     } else {
         MaterialTheme.colorScheme.onSurface
     }
-    // 思考与工具拆为独立行：连续思考并成一段只占一行，工具在下方按个数折叠（对齐网页版）。
-    val reasoningRuns = group.reasoningRuns
+    // 同组内的思考全部并成一行：上面是正文、下面是工具时，中间思考只占一行概览；
+    // 有新思考在跑时，概览尾随最新一行。工具调用不再打断合并（展示层本就把工具收进 bundle）。
+    val mergedReasoning = reasoningRuns.flatten()
+    val reasoningRowRunning = isRunning && group.tools.isEmpty()
     Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
         if (command != null) {
             ProcessCommandRow(
@@ -2025,18 +2027,18 @@ private fun ConversationProcessRow(
         } else {
             group.contexts.forEach { ProcessContextDisclosure(it) }
         }
-        reasoningRuns.forEachIndexed { index, run ->
+        if (mergedReasoning.isNotEmpty()) {
             ProcessReasoningDisclosure(
-                runId = run.first().id,
-                text = run.joinToString("\n\n", transform = ConversationItem::text),
-                running = isRunning && index == reasoningRuns.lastIndex
+                runId = mergedReasoning.first().id,
+                text = mergedReasoning.joinToString("\n\n", transform = ConversationItem::text),
+                running = reasoningRowRunning
             )
         }
         if (group.tools.isNotEmpty()) {
             ProcessToolBundle(
                 groupId = group.id,
                 tools = group.tools,
-                isRunning = isRunning && reasoningRuns.isEmpty()
+                isRunning = isRunning && !reasoningRowRunning
             )
         }
         HorizontalDivider(
