@@ -1510,6 +1510,16 @@ private final class StreamingAssistantCell: StableSelfSizingCollectionViewCell {
         return label
     }()
 
+    private let spinner: UIActivityIndicatorView = {
+        let view = UIActivityIndicatorView(style: .medium)
+        view.hidesWhenStopped = false
+        view.color = UIColor(red: 0.18, green: 0.42, blue: 0.9, alpha: 1)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.startAnimating()
+        view.accessibilityLabel = String(localized: "正在生成")
+        return view
+    }()
+
     private let textView: UITextView = {
         let view = UITextView()
         view.backgroundColor = .clear
@@ -1532,7 +1542,7 @@ private final class StreamingAssistantCell: StableSelfSizingCollectionViewCell {
         backgroundColor = .clear
         contentView.backgroundColor = .clear
 
-        let header = UIStackView(arrangedSubviews: [whaleView, titleLabel])
+        let header = UIStackView(arrangedSubviews: [whaleView, titleLabel, spinner])
         header.axis = .horizontal
         header.alignment = .center
         header.spacing = 9
@@ -1547,6 +1557,8 @@ private final class StreamingAssistantCell: StableSelfSizingCollectionViewCell {
         NSLayoutConstraint.activate([
             whaleView.widthAnchor.constraint(equalToConstant: 26),
             whaleView.heightAnchor.constraint(equalToConstant: 26),
+            spinner.widthAnchor.constraint(equalToConstant: 16),
+            spinner.heightAnchor.constraint(equalToConstant: 16),
             stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
             stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
             stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 15),

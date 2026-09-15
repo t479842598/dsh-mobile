@@ -779,7 +779,10 @@ private fun ConversationTimeline(
         timelineEntries.size,
         items.lastOrNull()?.text?.length,
         initialPositionApplied,
-        hasStreamingItem
+        hasStreamingItem,
+        // 底部计划/目标/统计面板展开时会直接占用输入框上方空间（bottomContentHeight 增大）。
+        // 已贴底时必须同步跟尾，否则新长出的面板会盖住正在执行的对话尾部。
+        bottomContentHeight
     ) {
         if (initialPositionApplied && isPinnedToBottom && timelineEntries.isNotEmpty()) {
             programmaticScrollCount += 1
@@ -914,7 +917,8 @@ private fun ConversationTimeline(
                             thumbnails = stateHolder.attachmentThumbnails,
                             attachmentStates = stateHolder.attachmentStates,
                             onRetryAttachment = stateHolder::retryAttachment,
-                            onPreviewImages = onPreviewImages
+                            onPreviewImages = onPreviewImages,
+                            isStreaming = display.item.id == activeStreamingMessageId
                         )
                         is ConversationDisplayEntry.Process -> ConversationProcessRow(display.group)
                     }
@@ -922,7 +926,8 @@ private fun ConversationTimeline(
                         item = entry.item,
                         thumbnails = stateHolder.attachmentThumbnails,
                         states = stateHolder.attachmentStates,
-                        onRetry = stateHolder::retryAttachment
+                        onRetry = stateHolder::retryAttachment,
+                        isStreaming = entry.item.id == activeStreamingMessageId
                     )
                     is ConversationTimelineEntry.AssistantMarkdown -> DshLazyMarkdownText(
                         markdown = entry.markdown,
@@ -1836,7 +1841,8 @@ private fun ConversationRow(
     thumbnails: Map<String, ImageBitmap>,
     attachmentStates: Map<String, AttachmentLoadState>,
     onRetryAttachment: (String) -> Unit,
-    onPreviewImages: (List<GatewayImageAttachment>, Int) -> Unit
+    onPreviewImages: (List<GatewayImageAttachment>, Int) -> Unit,
+    isStreaming: Boolean = false
 ) {
     when (item.kind) {
         ConversationItemKind.USER -> UserMessage(
@@ -1846,7 +1852,7 @@ private fun ConversationRow(
             onRetryAttachment,
             onPreviewImages
         )
-        ConversationItemKind.ASSISTANT -> AssistantMessage(item, thumbnails, attachmentStates, onRetryAttachment)
+        ConversationItemKind.ASSISTANT -> AssistantMessage(item, thumbnails, attachmentStates, onRetryAttachment, isStreaming)
         ConversationItemKind.STATUS -> StatusRow(item)
         ConversationItemKind.SYSTEM -> SystemRow(item)
         else -> Unit
@@ -2479,14 +2485,15 @@ private fun AssistantMessage(
     item: ConversationItem,
     thumbnails: Map<String, ImageBitmap>,
     states: Map<String, AttachmentLoadState>,
-    onRetry: (String) -> Unit
+    onRetry: (String) -> Unit,
+    isStreaming: Boolean = false
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-        AssistantMessageHeaderContent(item, thumbnails, states, onRetry)
+        AssistantMessageHeaderContent(item, thumbnails, states, onRetry, isStreaming)
         if (item.text.isNotEmpty()) {
             DshStreamingAwareMarkdownText(
                 markdown = item.text,
-                isStreaming = false,
+                isStreaming = isStreaming,
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -2499,13 +2506,14 @@ private fun AssistantMessageHeader(
     item: ConversationItem,
     thumbnails: Map<String, ImageBitmap>,
     states: Map<String, AttachmentLoadState>,
-    onRetry: (String) -> Unit
+    onRetry: (String) -> Unit,
+    isStreaming: Boolean = false
 ) {
     Column(
         Modifier.fillMaxWidth().padding(top = 12.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
-        AssistantMessageHeaderContent(item, thumbnails, states, onRetry)
+        AssistantMessageHeaderContent(item, thumbnails, states, onRetry, isStreaming)
     }
 }
 
@@ -2514,7 +2522,8 @@ private fun AssistantMessageHeaderContent(
     item: ConversationItem,
     thumbnails: Map<String, ImageBitmap>,
     states: Map<String, AttachmentLoadState>,
-    onRetry: (String) -> Unit
+    onRetry: (String) -> Unit,
+    isStreaming: Boolean = false
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
         WhaleIcon(Modifier.width(26.dp).height(20.dp))
@@ -2524,6 +2533,13 @@ private fun AssistantMessageHeaderContent(
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold
         )
+        if (isStreaming) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp).testTag("assistant-streaming-indicator"),
+                strokeWidth = 2.dp,
+                color = DshColors.Ocean
+            )
+        }
     }
     AttachmentGrid(item.images, thumbnails, states, onRetry)
 }

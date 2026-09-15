@@ -181,6 +181,13 @@ struct ConversationView: View {
             guard height > 0, abs(height - composerHeight) > 0.5 else { return }
             composerHeight = height
         }
+        .onChange(of: composerHeight) { _, _ in
+            // 输入框上方的统计条/计划/目标面板展开时会直接占用底部空间
+            // （composerHeight 增大 → viewport bottomInset 增大）。
+            // 已贴底时同步跟尾，否则新长出的面板会盖住正在执行的对话尾部。
+            guard isPinnedToBottom, !conversationItems.isEmpty else { return }
+            viewportScrollToBottomToken &+= 1
+        }
         .onChange(of: composerIsFocused) { _, isFocused in
             guard isFocused else { return }
             viewportScrollToBottomToken &+= 1
@@ -2095,6 +2102,12 @@ private struct ConversationRow: View {
                     Text(item.title)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
+                    if item.title.contains("正在生成") {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(DSHColor.ocean)
+                            .accessibilityLabel("正在生成")
+                    }
                 }
                 .padding(.horizontal, 2)
                 .padding(.vertical, 5)
