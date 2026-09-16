@@ -689,7 +689,7 @@ final class DshDirectClient: GatewayClient {
 
     // MARK: 会话管理与队列（BFF RPC）
 
-    func createDirectory(path: String, name: String) {
+    override func createDirectory(path: String, name: String) {
         runRPC(method: "host.createDirectory", payload: .object(["path": .string(path), "name": .string(name)]), requestType: "directory-create") {
             var frame = GatewayFrame(kind: "directory-create")
             frame.path = $0["path"]?.stringValue ?? (path as NSString).appendingPathComponent(name)
@@ -698,7 +698,7 @@ final class DshDirectClient: GatewayClient {
     }
 
     /// 停止当前回合。成功后 turn/end 事件会经事件流自然到达，无需额外收尾帧。
-    func cancelTurn(sessionId: String) {
+    override func cancelTurn(sessionId: String) {
         runRPC(method: "session.cancel", payload: .object(["sessionId": .string(sessionId)]), requestType: "session-cancel") { _ in
             var frame = GatewayFrame(kind: "session-cancel", sessionId: sessionId)
             frame.set = sessionId
@@ -706,7 +706,7 @@ final class DshDirectClient: GatewayClient {
         }
     }
 
-    func renameSession(sessionId: String, title: String) {
+    override func renameSession(sessionId: String, title: String) {
         runRPC(method: "session.rename", payload: .object(["sessionId": .string(sessionId), "title": .string(title)]), requestType: "session-rename") { _ in
             var frame = GatewayFrame(kind: "session-renamed", sessionId: sessionId)
             frame.set = title
@@ -714,7 +714,7 @@ final class DshDirectClient: GatewayClient {
         }
     }
 
-    func forkSession(sessionId: String) {
+    override func forkSession(sessionId: String) {
         runRPC(method: "session.fork", payload: .object(["sessionId": .string(sessionId)]), requestType: "session-fork") {
             var frame = GatewayFrame(kind: "session-forked", sessionId: sessionId)
             frame.newSessionId = $0["sessionId"]?.stringValue
@@ -722,7 +722,7 @@ final class DshDirectClient: GatewayClient {
         }
     }
 
-    func archiveSession(sessionId: String) {
+    override func archiveSession(sessionId: String) {
         runRPC(method: "workspace.archiveSession", payload: .object(["sessionId": .string(sessionId)]), requestType: "session-archive") {
             var frame = GatewayFrame(kind: "session-archived", sessionId: sessionId)
             frame.archivedSessionIds = $0["archivedSessionIds"]?.arrayValue?.compactMap(\.stringValue)
@@ -733,7 +733,7 @@ final class DshDirectClient: GatewayClient {
     /// 编辑/移除/插队一条仍在排队的消息（session.updateQueue）。
     /// - Parameters:
     ///   - action: `.edit(text)` / `.remove` / `.steer`
-    func updateQueueItem(sessionId: String, itemId: String, action: DshQueueAction) {
+    override func updateQueueItem(sessionId: String, itemId: String, action: DshQueueAction) {
         let payload: JSONValue = .object([
             "sessionId": .string(sessionId),
             "itemId": .string(itemId),
@@ -747,7 +747,7 @@ final class DshDirectClient: GatewayClient {
 
     // MARK: 子代理（BFF subagent.*）
 
-    func requestSubagents(parentSessionId: String) {
+    override func requestSubagents(parentSessionId: String) {
         runRPC(method: "subagent.list", payload: .object(["parentSessionId": .string(parentSessionId)]), requestType: "subagents") {
             var frame = GatewayFrame(kind: "subagents", sessionId: parentSessionId)
             frame.items = $0["entries"]?.arrayValue ?? []
@@ -755,7 +755,7 @@ final class DshDirectClient: GatewayClient {
         }
     }
 
-    func requestSubagentHistory(
+    override func requestSubagentHistory(
         parentSessionId: String,
         childSessionId: String,
         mode: String,
@@ -774,7 +774,7 @@ final class DshDirectClient: GatewayClient {
         return (events, value["hasMore"]?.boolValue ?? false)
     }
 
-    func promptSubagent(parentSessionId: String, childSessionId: String, text: String) async throws {
+    override func promptSubagent(parentSessionId: String, childSessionId: String, text: String) async throws {
         _ = try await call("subagent.prompt", .object([
             "parentSessionId": .string(parentSessionId),
             "childSessionId": .string(childSessionId),
@@ -784,7 +784,7 @@ final class DshDirectClient: GatewayClient {
         ]))
     }
 
-    func interruptSubagent(parentSessionId: String, childSessionId: String, mode: String) async throws {
+    override func interruptSubagent(parentSessionId: String, childSessionId: String, mode: String) async throws {
         _ = try await call("subagent.interrupt", .object([
             "parentSessionId": .string(parentSessionId),
             "childSessionId": .string(childSessionId),
@@ -795,7 +795,7 @@ final class DshDirectClient: GatewayClient {
     // MARK: 会话导出（GET /api/session.export）
 
     /// 导出为 ZIP（内含 session.jsonl）。`includeDescendants` 连子代理一起导出。
-    func downloadSessionExport(sessionId: String, includeDescendants: Bool = true) async throws -> Data {
+    override func downloadSessionExport(sessionId: String, includeDescendants: Bool = true) async throws -> Data {
         guard let base = httpBaseURL else { throw DshDirectAuthService.AuthError.notConfigured }
         var components = URLComponents(url: base.appendingPathComponent("api/session.export"), resolvingAgainstBaseURL: false)
         components?.queryItems = [
