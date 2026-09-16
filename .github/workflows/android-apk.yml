@@ -12,6 +12,7 @@ name: Android APK
 on:
   push:
     branches: [main, 'work/**']
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -101,6 +102,15 @@ jobs:
           body: |
             最新 Android 构建，手机浏览器直接下载 APK 覆盖安装即可（与 release 包同 debug 签名）。
             分支：${{ github.ref_name }}，提交：${{ github.sha }}。
+          files: |
+            ${{ env.APK }}
+            apk.sha256
+
+      # 正式版 tag（v*）额外把 APK 附到版本 Release，与 iOS .ipa 放一起。
+      - name: Attach APK to version release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
           files: |
             ${{ env.APK }}
             apk.sha256

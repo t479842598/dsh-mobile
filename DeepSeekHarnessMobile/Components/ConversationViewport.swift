@@ -1494,32 +1494,7 @@ private final class ZoomingImageViewController: UIViewController, UIScrollViewDe
 private final class StreamingAssistantCell: StableSelfSizingCollectionViewCell {
     static let reuseIdentifier = "StreamingAssistantCell"
 
-    private let whaleView: UIImageView = {
-        let view = UIImageView(image: UIImage(named: "DeepSeekWhale")?.withRenderingMode(.alwaysTemplate))
-        view.tintColor = .secondaryLabel
-        view.contentMode = .scaleAspectFit
-        view.translatesAutoresizingMaskIntoConstraints = false
-        return view
-    }()
-
-    private let titleLabel: UILabel = {
-        let label = UILabel()
-        label.font = .preferredFont(forTextStyle: .subheadline).withWeight(.semibold)
-        label.textColor = .secondaryLabel
-        label.adjustsFontForContentSizeCategory = true
-        return label
-    }()
-
-    private let spinner: UIActivityIndicatorView = {
-        let view = UIActivityIndicatorView(style: .medium)
-        view.hidesWhenStopped = false
-        view.color = UIColor(red: 0.18, green: 0.42, blue: 0.9, alpha: 1)
-        view.translatesAutoresizingMaskIntoConstraints = false
-        view.startAnimating()
-        view.accessibilityLabel = String(localized: "正在生成")
-        return view
-    }()
-
+    // 对齐网页版：流式正文无图标无标题，直接排文本。
     private let textView: UITextView = {
         let view = UITextView()
         view.backgroundColor = .clear
@@ -1542,27 +1517,14 @@ private final class StreamingAssistantCell: StableSelfSizingCollectionViewCell {
         backgroundColor = .clear
         contentView.backgroundColor = .clear
 
-        let header = UIStackView(arrangedSubviews: [whaleView, titleLabel, spinner])
-        header.axis = .horizontal
-        header.alignment = .center
-        header.spacing = 9
-
-        let stack = UIStackView(arrangedSubviews: [header, textView])
-        stack.axis = .vertical
-        stack.alignment = .fill
-        stack.spacing = 7
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(stack)
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(textView)
 
         NSLayoutConstraint.activate([
-            whaleView.widthAnchor.constraint(equalToConstant: 26),
-            whaleView.heightAnchor.constraint(equalToConstant: 26),
-            spinner.widthAnchor.constraint(equalToConstant: 16),
-            spinner.heightAnchor.constraint(equalToConstant: 16),
-            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
-            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
-            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 15),
-            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -15)
+            textView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
+            textView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
+            textView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            textView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4)
         ])
     }
 
@@ -1576,7 +1538,6 @@ private final class StreamingAssistantCell: StableSelfSizingCollectionViewCell {
 
     @discardableResult
     func apply(_ payload: ConversationViewportEntry.StreamingAssistant) -> Bool {
-        titleLabel.text = payload.title
         guard payload.text != renderedText else { return false }
 
         if payload.text.hasPrefix(renderedText) {

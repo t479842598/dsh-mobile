@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import MarkdownUI
 import PhotosUI
 import UIKit
@@ -18,6 +19,7 @@ struct ConversationView: View {
     @State private var isPinnedToBottom = true
     @State private var composerHeight: CGFloat = 168
     @State private var viewportScrollToBottomToken = 0
+    @State private var runStart: Date?
     @State private var viewportProxy = ConversationViewportProxy()
     @State private var isPreparingHistoryPresentation = false
     @State private var historyPresentationSessionID: String?
@@ -188,6 +190,14 @@ struct ConversationView: View {
             guard isPinnedToBottom, !conversationItems.isEmpty else { return }
             viewportScrollToBottomToken &+= 1
         }
+        .onChange(of: store.selectedSession?.isRunning) { _, running in
+            // 整轮级状态行的计时起点：running 翻转时刻（对齐安卓 runStartMs）。
+            if running == true {
+                if runStart == nil { runStart = Date() }
+            } else {
+                runStart = nil
+            }
+        }
         .onChange(of: composerIsFocused) { _, isFocused in
             guard isFocused else { return }
             viewportScrollToBottomToken &+= 1
@@ -212,6 +222,7 @@ struct ConversationView: View {
             viewportScrollToBottomToken &+= 1
         }
         .task(id: store.selectedSessionId) {
+            runStart = nil
             guard let sessionID = store.selectedSessionId else {
                 historyPresentationSessionID = nil
                 isPreparingHistoryPresentation = false
@@ -966,7 +977,14 @@ struct ConversationView: View {
     }
 
     private func makeConversationViewportEntries(from items: [ConversationItem]) -> [ConversationViewportEntry] {
-        ConversationDisplayEntry.make(from: items).map { entry in
+        let displayEntries = ConversationDisplayEntry.make(from: items)
+        // 运行态转圈只落在最后一个过程组上（对齐安卓端）。
+        let sessionRunning = store.selectedSession?.isRunning == true
+        let lastProcessID = displayEntries.last(where: {
+            if case .process = $0.content { return true }
+            return false
+        })?.id
+        var result = displayEntries.map { entry in
             let revision = viewportEntryRevision(entry)
             if case .message(let item) = entry.content,
                item.kind == .assistant,
@@ -1013,7 +1031,7 @@ struct ConversationView: View {
                 allowsHeightCaching = !MarkdownViewportSizing.requiresLiveMeasurement(item.text)
             case .process(let group):
                 content = AnyView(
-                    ConversationProcessRow(group: group)
+                    ConversationProcessRow(group: group, isRunning: sessionRunning && entry.id == lastProcessID)
                         .environment(\.conversationDisclosureWillToggle) {
                             viewportProxy.invalidateHeight(for: entry.id)
                         }
@@ -1031,6 +1049,21 @@ struct ConversationView: View {
                 allowsHeightCaching: allowsHeightCaching
             )
         }
+        // 网页版同款整轮级状态行：运行全程常驻流底部，不按 step 闪烁。
+        if store.selectedSession?.isRunning == true {
+            var hasher = Hasher()
+            hasher.combine("turn-status")
+            hasher.combine(store.selectedSessionId)
+            if let start = runStart {
+                hasher.combine(start.timeIntervalSince1970)
+            }
+            result.append(.init(
+                id: "turn-status",
+                revision: hasher.finalize(),
+                content: AnyView(TurnStatusRow(startTime: runStart))
+            ))
+        }
+        return result
     }
 
     private func viewportEntryRevision(_ entry: ConversationDisplayEntry) -> Int {
@@ -1048,6 +1081,8 @@ struct ConversationView: View {
                 hasher.combine(store.imageData(for: image.id) != nil)
             }
         case .process(let group):
+            // 运行态转圈显隐需要刷新行；仍跳过流式推理正文（注释见下）。
+            hasher.combine(store.selectedSession?.isRunning == true)
             for item in group.items {
                 hasher.combine(item.id)
                 hasher.combine(item.title)
@@ -1516,6 +1551,52 @@ private struct SessionStatsPopover: View {
     }
 }
 
+/// 网页版同款整轮级状态行：“深度求索中…”品牌蓝扫光 + 15 秒后中文计时。
+private struct TurnStatusRow: View {
+    let startTime: Date?
+    @State private var now = Date()
+    @State private var sweep: CGFloat = -1
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("深度求索中…")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(DSHColor.ocean.opacity(0.45))
+                .overlay {
+                    LinearGradient(
+                        colors: [.clear, DSHColor.ocean, .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .mask(Text("深度求索中…").font(.subheadline.weight(.semibold)))
+                    .offset(x: 70 * sweep)
+                    .animation(.linear(duration: 1.8).repeatForever(autoreverses: false), value: sweep)
+                    .onAppear { sweep = 1 }
+                }
+                .clipped()
+                .accessibilityLabel("深度求索中")
+            if let clock = elapsedText {
+                Text(clock)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now = $0 }
+    }
+
+    private var elapsedText: String? {
+        guard let startTime else { return nil }
+        let seconds = max(0, Int(now.timeIntervalSince(startTime)))
+        guard seconds >= 15 else { return nil }
+        let h = seconds / 3600, m = (seconds / 60) % 60, s = seconds % 60
+        if h > 0 { return "\(h)时\(String(format: "%02d", m))分\(String(format: "%02d", s))秒" }
+        if m > 0 { return "\(m)分\(String(format: "%02d", s))秒" }
+        return "\(s)秒"
+    }
+}
+
 private struct ContextUsagePopover: View {
     let snapshot: GatewayContextSnapshot?
 
@@ -1675,6 +1756,21 @@ private enum ConversationProcessContent: Identifiable {
     }
 }
 
+/// 组内按事件时间交错的一段：一段思考 / 一包相邻工具调用 / 一条上下文。
+private enum ProcessSegment: Identifiable {
+    case think([ConversationItem])
+    case tools([ConversationProcessTool])
+    case context(ConversationItem)
+
+    var id: String {
+        switch self {
+        case .think(let items): "think-\(items.first?.id ?? "?")"
+        case .tools(let tools): "tools-\(tools.first?.id ?? "?")"
+        case .context(let item): "context-\(item.id)"
+        }
+    }
+}
+
 private extension ConversationProcessGroup {
     var contents: [ConversationProcessContent] {
         var contents: [ConversationProcessContent] = []
@@ -1714,86 +1810,102 @@ private extension ConversationProcessGroup {
             if case .context = content { count + 1 } else { count }
         }
     }
+
+    /// 工具先全局配对（call↔result 不拆散），再按 call（无 call 则 result）
+    /// 在原始事件中的位置锚定，沿时间走一遍：连续思考攒成段，
+    /// 相邻工具包攒成包，上下文各占一段。
+    var segments: [ProcessSegment] {
+        var paired: [ConversationProcessTool] = []
+        for item in items {
+            switch item.kind {
+            case .tool, .jsonTool:
+                paired.append(.init(id: item.id, call: item, result: nil))
+            case .toolResult:
+                if let index = paired.firstIndex(where: { $0.result == nil }) {
+                    let existing = paired[index]
+                    paired[index] = .init(id: existing.id, call: existing.call, result: item)
+                } else {
+                    paired.append(.init(id: item.id, call: nil, result: item))
+                }
+            default:
+                break
+            }
+        }
+        var anchorOfPair: [String: Int] = [:]
+        for pair in paired {
+            if let anchorID = pair.call?.id ?? pair.result?.id,
+               let index = items.firstIndex(where: { $0.id == anchorID }) {
+                anchorOfPair[pair.id] = index
+            }
+        }
+        let pairsByAnchor = Dictionary(grouping: paired) { anchorOfPair[$0.id] ?? -1 }
+        var result: [ProcessSegment] = []
+        var thinkBuffer: [ConversationItem] = []
+        var toolBuffer: [ConversationProcessTool] = []
+        func flushThink() {
+            if !thinkBuffer.isEmpty {
+                result.append(.think(thinkBuffer))
+                thinkBuffer = []
+            }
+        }
+        func flushTools() {
+            if !toolBuffer.isEmpty {
+                result.append(.tools(toolBuffer))
+                toolBuffer = []
+            }
+        }
+        for (index, item) in items.enumerated() {
+            switch item.kind {
+            case .reasoning:
+                flushTools()
+                thinkBuffer.append(item)
+            case .context:
+                flushThink()
+                flushTools()
+                result.append(.context(item))
+            case .tool, .jsonTool, .toolResult:
+                flushThink()
+                if let anchored = pairsByAnchor[index] {
+                    toolBuffer.append(contentsOf: anchored)
+                }
+            default:
+                flushThink()
+                flushTools()
+            }
+        }
+        flushThink()
+        flushTools()
+        return result
+    }
 }
 
 private struct ConversationProcessRow: View {
     let group: ConversationProcessGroup
-    @State private var expanded = false
-    @Environment(\.conversationDisclosureWillToggle) private var disclosureWillToggle
-
-    private var reasoningText: String {
-        group.contents.compactMap { content in
-            if case .reasoning(let item) = content { item.text } else { nil }
-        }.filter { !$0.isEmpty }.joined(separator: "\n\n")
-    }
-
-    private var contexts: [ConversationItem] {
-        group.contents.compactMap { content in
-            if case .context(let item) = content { item } else { nil }
-        }
-    }
-
-    private var tools: [ConversationProcessTool] {
-        group.contents.compactMap { content in
-            if case .tool(let tool) = content { tool } else { nil }
-        }
-    }
+    let isRunning: Bool
 
     var body: some View {
+        // 思考段—工具包按事件时间交错直排（对齐网页版与安卓端）。
+        let segments = group.segments
         VStack(alignment: .leading, spacing: 6) {
-            Button { toggleWithoutAnimation($expanded, before: disclosureWillToggle) } label: {
-                HStack(spacing: 7) {
-                    Text(processTitle)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 8)
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
+            ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
+                let running = isRunning && index == segments.count - 1
+                switch segment {
+                case .think(let items):
+                    ConversationReasoningDisclosure(
+                        text: items.map(\.text).joined(separator: "\n\n"),
+                        running: running
+                    )
+                case .tools(let tools):
+                    ConversationToolBundle(tools: tools, isRunning: running)
+                case .context(let item):
+                    ConversationContextDisclosure(item: item)
                 }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if expanded {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(contexts) { item in
-                        ConversationContextDisclosure(item: item)
-                    }
-                    if !reasoningText.isEmpty {
-                        ConversationReasoningDisclosure(text: reasoningText)
-                    }
-                    if !tools.isEmpty {
-                        ConversationToolBundle(tools: tools)
-                    }
-                }
-                .padding(.leading, 2)
             }
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, 3)
         .overlay(alignment: .bottom) {
             Rectangle().fill(.gray.opacity(0.16)).frame(height: 1)
         }
-    }
-
-    private var processTitle: String {
-        if group.contextCount > 0, group.toolCount == 0, reasoningText.isEmpty {
-            return group.contextCount == 1 ? "上下文" : "\(group.contextCount) 项上下文"
-        }
-        let duration = group.duration
-        let base: String
-        if duration >= 60 {
-            base = "耗时 \(Int(duration) / 60) 分钟 \(Int(duration) % 60) 秒"
-        } else if duration >= 1 {
-            base = "耗时 \(Int(duration.rounded())) 秒"
-        } else {
-            base = "思考过程"
-        }
-        var details: [String] = []
-        if group.contextCount > 0 { details.append("\(group.contextCount) 项上下文") }
-        if group.toolCount > 0 { details.append("\(group.toolCount) 次工具调用") }
-        return details.isEmpty ? base : "\(base) · \(details.joined(separator: " · "))"
     }
 }
 
@@ -1814,11 +1926,20 @@ private struct ConversationContextDisclosure: View {
 
 private struct ConversationReasoningDisclosure: View {
     let text: String
+    let running: Bool
     @State private var expanded = false
     @Environment(\.conversationDisclosureWillToggle) private var disclosureWillToggle
 
+    /// 对齐网页版：完成后取首行概览，运行中尾随最新一行。
     private var preview: String {
-        text.replacingOccurrences(of: "\n", with: " ")
+        let line: String
+        if running {
+            let visible = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            line = visible.components(separatedBy: .newlines).last ?? ""
+        } else {
+            line = text.components(separatedBy: .newlines).first ?? ""
+        }
+        return line.replacingOccurrences(of: "**", with: "")
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -1834,7 +1955,7 @@ private struct ConversationReasoningDisclosure: View {
                     Image(systemName: "sparkles")
                         .foregroundStyle(DSHColor.purple)
                         .frame(width: 18)
-                    Text("Think")
+                    Text("思考")
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(DSHColor.purple)
                     if !preview.isEmpty {
@@ -1845,6 +1966,12 @@ private struct ConversationReasoningDisclosure: View {
                             .lineLimit(1)
                     }
                     Spacer(minLength: 8)
+                    if running {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(DSHColor.ocean)
+                            .accessibilityLabel("正在思考")
+                    }
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tertiary)
@@ -1879,6 +2006,7 @@ private struct ConversationReasoningDisclosure: View {
 
 private struct ConversationToolBundle: View {
     let tools: [ConversationProcessTool]
+    let isRunning: Bool
     @State private var expanded = false
     @Environment(\.conversationDisclosureWillToggle) private var disclosureWillToggle
 
@@ -1889,11 +2017,23 @@ private struct ConversationToolBundle: View {
                     Image(systemName: "wrench.and.screwdriver")
                         .foregroundStyle(DSHColor.orange)
                         .frame(width: 18)
-                    Text(bundleTitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    Text("\(tools.count) 次工具调用")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(DSHColor.orange)
+                    if !toolNames.isEmpty {
+                        Text("·").foregroundStyle(.tertiary)
+                        Text(toolNames)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                     Spacer(minLength: 8)
+                    if isRunning {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(DSHColor.ocean)
+                            .accessibilityLabel("工具执行中")
+                    }
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tertiary)
@@ -1914,9 +2054,8 @@ private struct ConversationToolBundle: View {
         }
     }
 
-    private var bundleTitle: String {
-        let names = tools.compactMap { $0.call?.title }.prefix(2).joined(separator: "、")
-        return names.isEmpty ? "查看 \(tools.count) 个工具结果" : "使用了 \(names)\(tools.count > 2 ? " 等工具" : "")"
+    private var toolNames: String {
+        tools.compactMap { $0.call?.title }.prefix(2).joined(separator: "、")
     }
 }
 
@@ -2096,21 +2235,8 @@ private struct ConversationRow: View {
                 tint: .green
             )
         case .assistant:
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 9) {
-                    DeepSeekWhaleIcon(size: 26).foregroundStyle(.primary)
-                    Text(item.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    if item.title.contains("正在生成") {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(DSHColor.ocean)
-                            .accessibilityLabel("正在生成")
-                    }
-                }
-                .padding(.horizontal, 2)
-                .padding(.vertical, 5)
+            // 对齐网页版：assistant 正文无图标无标题，直接排正文。
+            VStack(alignment: .leading, spacing: 4) {
                 if !item.images.isEmpty {
                     AttachmentImageGrid(attachments: item.images, imageData: imageData)
                 }
@@ -2120,9 +2246,9 @@ private struct ConversationRow: View {
                 }
                 if showsCopyButton && !item.text.isEmpty { CopyMessageButton(text: item.text) }
             }
-            .padding(.vertical, 3)
+            .padding(.vertical, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 12)
+            .padding(.vertical, 4)
         case .reasoning:
             CompactEventDisclosure(
                 expanded: $expanded,
