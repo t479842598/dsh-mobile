@@ -180,14 +180,7 @@ private struct ConversationNavigationShell<Content: View>: View {
                         Button("重新加载历史", systemImage: "clock.arrow.circlepath", action: onReloadHistory)
                         Button("发送 Ping", systemImage: "wave.3.right", action: onPing)
                         Divider()
-                        Button {
-                            if let id = header.sessionID ?? store.selectedSessionId {
-                                store.exportSession(id)
-                            }
-                        } label: {
-                            Label(store.isExportingSession ? "正在导出…" : "导出会话 (ZIP)", systemImage: "square.and.arrow.up")
-                        }
-                        .disabled(store.isExportingSession || (header.sessionID ?? store.selectedSessionId) == nil)
+                        // 会话导出 ZIP 只有直连原生协议支持，网关桥模式隐藏入口。
                         Button {
                             showsSubagentSheet = true
                         } label: {

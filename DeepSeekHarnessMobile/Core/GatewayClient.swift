@@ -150,6 +150,42 @@ class GatewayClient: ObservableObject {
         send(payload)
     }
     func createWorkspace(path: String) { send(["type": "workspace-create", "path": path]) }
+    func createDirectory(path: String, name: String) {
+        send(["type": "directory-create", "path": path, "name": name])
+    }
+    func renameSession(sessionId: String, title: String) {
+        send(["type": "session-rename", "sessionId": sessionId, "title": title])
+    }
+    func archiveSession(sessionId: String) {
+        send(["type": "session-archive", "sessionId": sessionId])
+    }
+    /// 停止当前回合（对齐安卓桥端 session-cancel）。turn/end 由事件流自然收敛。
+    func cancelTurn(sessionId: String) {
+        send(["type": "session-cancel", "sessionId": sessionId])
+    }
+    /// 以下为直连原生协议独有能力，网关桥插件没有对应报文：
+    /// 调用方已收敛为空态/提示，UI 入口同步隐藏，保留方法仅为编译期兼容。
+    func forkSession(sessionId: String) { /* 网关桥模式暂不支持创建 Fork */ }
+    func updateQueueItem(sessionId: String, itemId: String, action: DshQueueAction) { /* 网关桥模式暂不支持队列操作 */ }
+    func requestSubagents(parentSessionId: String) { /* 网关桥模式暂不支持子代理列表 */ }
+    func requestSubagentHistory(
+        parentSessionId: String,
+        childSessionId: String,
+        mode: String,
+        beforeSeq: Int? = nil,
+        maxMessages: Int = 50
+    ) async throws -> (events: [RawSessionEvent], hasMore: Bool) {
+        throw BridgeUnsupportedError("网关桥模式暂不支持查看子代理记录")
+    }
+    func promptSubagent(parentSessionId: String, childSessionId: String, text: String) async throws {
+        throw BridgeUnsupportedError("网关桥模式暂不支持与子代理对话")
+    }
+    func interruptSubagent(parentSessionId: String, childSessionId: String, mode: String) async throws {
+        throw BridgeUnsupportedError("网关桥模式暂不支持中断子代理")
+    }
+    func downloadSessionExport(sessionId: String, includeDescendants: Bool = true) async throws -> Data {
+        throw BridgeUnsupportedError("网关桥模式暂不支持导出会话")
+    }
     func requestModels(sessionId: String? = nil) {
         var payload: [String: Any] = ["type": "models"]
         if let sessionId, !sessionId.isEmpty { payload["sessionId"] = sessionId }
@@ -508,6 +544,13 @@ private enum GatewayDeviceIdentityStore {
             (SecCopyErrorMessageString(status, nil) as String?) ?? "Keychain 错误 \(status)"
         }
     }
+}
+
+/// 网关桥插件没有对应报文的能力，调用时抛给 AppStore 转成提示。
+struct BridgeUnsupportedError: LocalizedError {
+    let message: String
+    init(_ message: String) { self.message = message }
+    var errorDescription: String? { message }
 }
 
 private enum GatewayTokenStore {

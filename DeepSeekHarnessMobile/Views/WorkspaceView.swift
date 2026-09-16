@@ -303,11 +303,7 @@ struct WorkspaceView: View {
                         } label: {
                             Label("重命名", systemImage: "pencil")
                         }
-                        Button {
-                            store.forkSession(session.id)
-                        } label: {
-                            Label("创建 Fork", systemImage: "arrow.triangle.branch")
-                        }
+                        // 创建 Fork 只有直连原生协议支持，网关桥模式隐藏入口。
                         Button(role: .destructive) {
                             store.archiveSession(session.id)
                         } label: {
