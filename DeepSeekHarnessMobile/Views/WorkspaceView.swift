@@ -46,12 +46,14 @@ struct WorkspaceView: View {
             }
             .scrollIndicators(.hidden)
             .scrollDismissesKeyboard(.interactively)
+            // 白字只罩工作区深色内容：sheet 会继承环境，罩在外层会把
+            // 通知/配对等表里的 .primary/.secondary 一起漂成白色。
+            .foregroundStyle(.white)
         }
         // A tap handled by empty layout content does not reach the background
         // layer. Keep a container-level fallback; controls retain their own
         // actions and the search field consumes its tap while becoming focused.
         .onTapGesture { sessionSearchIsFocused = false }
-        .foregroundStyle(.white)
         .onAppear {
             store.refreshRemoteState()
         }

@@ -354,16 +354,18 @@ struct NoticeListView: View {
                                                 .foregroundStyle(item.isError ? Color.red : DSHColor.ocean)
                                             Text(item.title)
                                                 .font(.subheadline.weight(.medium))
-                                                .foregroundStyle(.primary)
+                                                // 绝对颜色：.primary/.secondary 是相对层级样式，
+                                                // 会被 presenting 方的 .white 污染漂白。
+                                                .foregroundStyle(Color(uiColor: .label))
                                                 .lineLimit(1)
                                             Spacer()
                                             Text(item.date, style: .time)
                                                 .font(.caption2)
-                                                .foregroundStyle(.secondary)
+                                                .foregroundStyle(Color(uiColor: .secondaryLabel))
                                         }
                                         Text(item.text)
                                             .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(Color(uiColor: .secondaryLabel))
                                             .lineLimit(3)
                                     }
                                     .padding(12)

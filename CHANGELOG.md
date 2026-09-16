@@ -3,6 +3,12 @@
 本文件记录 dsh-mobile（DeepSeek Harness 移动客户端：iOS / Android）的版本变更。
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循语义化版本。
 
+## [1.6.10] - 2026-09-16
+
+- iOS 通知白字根因修复：工作区 `.foregroundStyle(.white)` 只罩深色滚动内容，
+  不再污染 sheet；通知文字改绝对颜色，深浅模式都可见。
+- 两端版本号统一为 `1.6.10`（Android build 18 / iOS build 14）。
+
 ## [1.6.9] - 2026-09-16
 
 - iOS 流式思考独立成行：TextKit 直追全文、头部常驻最新一行概览 + 转圈，
