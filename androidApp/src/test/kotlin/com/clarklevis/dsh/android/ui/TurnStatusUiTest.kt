@@ -38,20 +38,22 @@ class TurnStatusUiTest {
     }
 
     @Test
-    fun `consecutive reasoning merges into one run split by tools`() {
+    fun `segments interleave think runs and tool bundles in event order`() {
         val group = ConversationProcessGroup(
             id = "process-1",
             items = listOf(
                 ConversationItem(id = "r1", kind = ConversationItemKind.REASONING, title = "Think", text = "a"),
                 ConversationItem(id = "r2", kind = ConversationItemKind.REASONING, title = "Think", text = "b"),
                 ConversationItem(id = "t1", kind = ConversationItemKind.TOOL, title = "Bash", text = "{}"),
+                ConversationItem(id = "t1r", kind = ConversationItemKind.TOOL_RESULT, title = "工具完成", text = "ok"),
                 ConversationItem(id = "r3", kind = ConversationItemKind.REASONING, title = "Think", text = "c")
             )
         )
 
-        val runs = group.reasoningRuns
-        assertEquals(2, runs.size)
-        assertEquals(listOf("r1", "r2"), runs[0].map { it.id })
-        assertEquals(listOf("r3"), runs[1].map { it.id })
+        val segments = group.segments
+        assertEquals(3, segments.size)
+        assertEquals(listOf("r1", "r2"), (segments[0] as ProcessSegment.Think).items.map { it.id })
+        assertEquals(listOf("t1"), (segments[1] as ProcessSegment.Tools).tools.map { it.id })
+        assertEquals(listOf("r3"), (segments[2] as ProcessSegment.Think).items.map { it.id })
     }
 }

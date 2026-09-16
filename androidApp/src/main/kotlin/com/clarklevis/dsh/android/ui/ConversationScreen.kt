@@ -2012,10 +2012,12 @@ private fun ConversationProcessRow(
     } else {
         MaterialTheme.colorScheme.onSurface
     }
-    // 同组内的思考全部并成一行：上面是正文、下面是工具时，中间思考只占一行概览；
-    // 有新思考在跑时，概览尾随最新一行。工具调用不再打断合并（展示层本就把工具收进 bundle）。
-    val mergedReasoning = reasoningRuns.flatten()
-    val reasoningRowRunning = isRunning && group.tools.isEmpty()
+    // 同组内思考段—工具包按事件时间交错直排；有 command 时上下文收进 command 展开区。
+    val segments = if (command != null) {
+        group.segments.filterNot { it is ProcessSegment.Context }
+    } else {
+        group.segments
+    }
     Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
         if (command != null) {
             ProcessCommandRow(
@@ -2024,22 +2026,25 @@ private fun ConversationProcessRow(
                 detailedText = command.text.takeIf { group.commandHasDetailedText },
                 contexts = group.contexts
             )
-        } else {
-            group.contexts.forEach { ProcessContextDisclosure(it) }
         }
-        if (mergedReasoning.isNotEmpty()) {
-            ProcessReasoningDisclosure(
-                runId = mergedReasoning.first().id,
-                text = mergedReasoning.joinToString("\n\n", transform = ConversationItem::text),
-                running = reasoningRowRunning
-            )
-        }
-        if (group.tools.isNotEmpty()) {
-            ProcessToolBundle(
-                groupId = group.id,
-                tools = group.tools,
-                isRunning = isRunning && !reasoningRowRunning
-            )
+        segments.forEachIndexed { index, segment ->
+            val running = isRunning && index == segments.lastIndex
+            when (segment) {
+                is ProcessSegment.Think -> {
+                    val items = segment.items
+                    ProcessReasoningDisclosure(
+                        runId = items.first().id,
+                        text = items.joinToString("\n\n", transform = ConversationItem::text),
+                        running = running
+                    )
+                }
+                is ProcessSegment.Tools -> ProcessToolBundle(
+                    groupId = "${group.id}-$index",
+                    tools = segment.tools,
+                    isRunning = running
+                )
+                is ProcessSegment.Context -> ProcessContextDisclosure(segment.item)
+            }
         }
         HorizontalDivider(
             modifier = Modifier.padding(top = 3.dp),

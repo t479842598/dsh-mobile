@@ -191,25 +191,6 @@ internal data class ConversationProcessGroup(
 
     val contexts: List<ConversationItem> = detailItems.filter { it.kind == ConversationItemKind.CONTEXT }
 
-    /**
-     * 按事件原始顺序把连续的思考切成段（工具/上下文自然断段）。
-     * 展示层把同组各段拼成一行；分段信息保留给以后真按时间交错排布时用。
-     */
-    val reasoningRuns: List<List<ConversationItem>> = buildList {
-        var current = mutableListOf<ConversationItem>()
-        fun flush() {
-            if (current.isNotEmpty()) {
-                add(current.toList())
-                current = mutableListOf()
-            }
-        }
-        detailItems.forEach { item ->
-            if (item.kind == ConversationItemKind.REASONING) current += item
-            else flush()
-        }
-        flush()
-    }
-
     val reasoningText: String = detailItems.asSequence()
         .filter { it.kind == ConversationItemKind.REASONING }
         .map(ConversationItem::text)
@@ -217,6 +198,12 @@ internal data class ConversationProcessGroup(
         .joinToString("\n\n")
 
     val tools: List<ConversationProcessTool> = pairProcessTools(detailItems)
+
+    /**
+     * 按事件原始顺序交错排布：思考段—工具包—思考段……连续思考并成一段，
+     * 相邻工具调用并成一个包，上下文各占一段。展示层照此顺序直排。
+     */
+    val segments: List<ProcessSegment> = buildProcessSegments(detailItems, tools)
 
     val commandHasDetailedText: Boolean
         get() = command?.text?.let { it.contains('\n') || it.length > COMMAND_PREVIEW_LIMIT } == true
@@ -264,6 +251,70 @@ internal data class ConversationProcessTool(
     val call: ConversationItem?,
     val result: ConversationItem?
 )
+
+/** 过程组内按时间交错的一段：一段思考 / 一包相邻工具调用 / 一条上下文。 */
+internal sealed interface ProcessSegment {
+    data class Think(val items: List<ConversationItem>) : ProcessSegment
+    data class Tools(val tools: List<ConversationProcessTool>) : ProcessSegment
+    data class Context(val item: ConversationItem) : ProcessSegment
+}
+
+/**
+ * 把配好对的工具按 call（无 call 则 result）在明细中的位置锚定，
+ * 再沿事件顺序走一遍：连续思考攒成段，相邻工具包攒成包，上下文各占一段。
+ * 配对在全局已完成，这里只定序，不拆对。
+ */
+internal fun buildProcessSegments(
+    detailItems: List<ConversationItem>,
+    tools: List<ConversationProcessTool>
+): List<ProcessSegment> {
+    val indexByItemId = detailItems.mapIndexed { index, item -> item.id to index }.toMap()
+    val pairsByAnchor = tools.groupBy { tool ->
+        val anchorId = tool.call?.id ?: tool.result?.id
+        anchorId?.let(indexByItemId::get) ?: -1
+    }.filterKeys { it >= 0 }
+    return buildList {
+        var thinkBuffer = mutableListOf<ConversationItem>()
+        var toolBuffer = mutableListOf<ConversationProcessTool>()
+        fun flushThink() {
+            if (thinkBuffer.isNotEmpty()) {
+                add(ProcessSegment.Think(thinkBuffer.toList()))
+                thinkBuffer = mutableListOf()
+            }
+        }
+        fun flushTools() {
+            if (toolBuffer.isNotEmpty()) {
+                add(ProcessSegment.Tools(toolBuffer.toList()))
+                toolBuffer = mutableListOf()
+            }
+        }
+        detailItems.forEachIndexed { index, item ->
+            when (item.kind) {
+                ConversationItemKind.REASONING -> {
+                    flushTools()
+                    thinkBuffer += item
+                }
+                ConversationItemKind.CONTEXT -> {
+                    flushThink()
+                    flushTools()
+                    add(ProcessSegment.Context(item))
+                }
+                ConversationItemKind.TOOL,
+                ConversationItemKind.JSON_TOOL,
+                ConversationItemKind.TOOL_RESULT -> {
+                    flushThink()
+                    pairsByAnchor[index]?.let { toolBuffer += it }
+                }
+                else -> {
+                    flushThink()
+                    flushTools()
+                }
+            }
+        }
+        flushThink()
+        flushTools()
+    }
+}
 
 internal fun makeConversationDisplayEntries(
     items: List<ConversationItem>
