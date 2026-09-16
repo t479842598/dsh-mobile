@@ -636,6 +636,7 @@ private struct ManualGatewayPairingSheet: View {
     @State private var pairingText = ""
     @State private var validationError: String?
     @State private var didAttemptConnection = false
+    @State private var showsScanner = false
 
     var body: some View {
         NavigationStack {
@@ -644,7 +645,7 @@ private struct ManualGatewayPairingSheet: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("手动输入配对信息")
                             .font(.title2.bold())
-                        Text("粘贴 Harness WebUI 提供的 Base64URL 配对字符串。长期设备 token 仍只会保存到 Keychain。")
+                        Text("扫描二维码，或粘贴 Harness WebUI 提供的 Base64URL 配对字符串。长期设备 token 仍只会保存到 Keychain。")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -699,10 +700,31 @@ private struct ManualGatewayPairingSheet: View {
             .navigationTitle("设备认证")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showsScanner = true
+                    } label: {
+                        Label("扫码", systemImage: "qrcode.viewfinder")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("完成") { dismiss() }
                 }
             }
+        }
+        .fullScreenCover(isPresented: $showsScanner) {
+            GatewayQRScannerView(
+                onCode: { code in
+                    showsScanner = false
+                    pairingText = code
+                    connect()
+                },
+                onCancel: { showsScanner = false },
+                onFailure: { message in
+                    showsScanner = false
+                    validationError = message
+                }
+            )
         }
         .presentationDetents([.large])
         .presentationBackground(.regularMaterial)
