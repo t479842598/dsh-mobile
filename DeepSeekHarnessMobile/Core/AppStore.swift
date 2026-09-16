@@ -97,6 +97,9 @@ final class AppStore: ObservableObject {
     private var historyRequestTokens: [String: UUID] = [:]
     private var historyPaginationCursors: [String: Set<Int>] = [:]
     private var historyNextBeforeSeq: [String: Int] = [:]
+    /// 服务端随历史页下发的格式版本：续取旧页时必须原样带回，否则被拒收
+    ///（History format mismatch）。新一轮最新页加载时重置。
+    private var historyFormatVersions: [String: Int] = [:]
     private var historyBatchPageCounts: [String: Int] = [:]
     private var historyBatchKinds: [String: HistoryBatchKind] = [:]
     private var historyLoadedEventCounts: [String: Int] = [:]
@@ -454,6 +457,7 @@ final class AppStore: ObservableObject {
         if !older, events[sessionId, default: []].isEmpty {
             historyHasMore[sessionId] = false
             historyNextBeforeSeq[sessionId] = nil
+            historyFormatVersions[sessionId] = nil
         }
         // Keep the installed projector alive. History is built as a separate
         // baseline and atomically rebased under the still-advancing live tail.
@@ -479,7 +483,8 @@ final class AppStore: ObservableObject {
             beforeSeq: beforeSeq,
             maxMessages: 60,
             maxBytes: Self.historyPageByteBudget,
-            view: "conversation"
+            view: "conversation",
+            historyFormatVersion: historyFormatVersions[sessionId]
         )
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(20))
@@ -1134,6 +1139,9 @@ final class AppStore: ObservableObject {
             self.historyLoadedByteCounts[id, default: 0] += frame.bytes ?? 0
             self.historyHasMore[id] = frame.hasMore ?? false
             self.historyBatchPageCounts[id, default: 0] += 1
+            if let formatVersion = frame.historyFormatVersion {
+                self.historyFormatVersions[id] = formatVersion
+            }
 
             if frame.hasMore == true, let earliestLocalSeq = self.events[id]?.first?.seq {
                 // A latest-tail refresh can run while many older pages are

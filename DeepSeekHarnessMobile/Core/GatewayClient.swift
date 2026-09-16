@@ -240,10 +240,17 @@ class GatewayClient: ObservableObject {
         beforeSeq: Int? = nil,
         maxMessages: Int = 50,
         maxBytes: Int? = nil,
-        view: String? = nil
+        view: String? = nil,
+        historyFormatVersion: Int? = nil
     ) {
         var payload: [String: Any] = ["type": "history", "sessionId": sessionId, "maxMessages": maxMessages]
-        if let beforeSeq { payload["beforeSeq"] = beforeSeq }
+        if let beforeSeq, let historyFormatVersion {
+            guard beforeSeq >= 0 else { return }
+            payload["beforeSeq"] = beforeSeq
+            payload["historyFormatVersion"] = historyFormatVersion
+        } else if let beforeSeq {
+            payload["beforeSeq"] = beforeSeq
+        }
         if let maxBytes { payload["maxBytes"] = maxBytes }
         if let view { payload["view"] = view }
         send(payload)

@@ -81,6 +81,8 @@ struct GatewayFrame: Codable, Sendable {
     var events: [RawSessionEvent]?
     var hasMore: Bool?
     var nextBeforeSeq: Int?
+    /// 网关历史格式版本：分页续取时必须原样带回（对齐上游），缺失会被拒收。
+    var historyFormatVersion: Int?
     var bytes: Int?
     var view: String?
     var query: String?

@@ -85,6 +85,7 @@ struct ConversationQueueSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .presentationBackground(.regularMaterial)
         .alert("编辑排队消息", isPresented: Binding(
             get: { editingItem != nil },
             set: { if !$0 { editingItem = nil } }
@@ -175,6 +176,7 @@ struct SubagentSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .presentationBackground(.regularMaterial)
         .task {
             if let id = store.selectedSessionId { store.loadSubagents(for: id) }
         }
@@ -375,6 +377,7 @@ struct NoticeListView: View {
             }
         }
         .presentationDetents([.medium, .large])
+        .presentationBackground(.regularMaterial)
         .onAppear { store.markNoticesSeen() }
     }
 }

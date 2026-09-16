@@ -1555,23 +1555,27 @@ private struct SessionStatsPopover: View {
 private struct TurnStatusRow: View {
     let startTime: Date?
     @State private var now = Date()
-    @State private var sweep: CGFloat = -1
+    // 扫光进度 0→1：只有光带在动，文字用 mask 定死，绝不飘。
+    @State private var sweep: CGFloat = 0
 
     var body: some View {
         HStack(spacing: 8) {
             Text("深度求索中…")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(DSHColor.ocean.opacity(0.45))
+                .foregroundStyle(DSHColor.ocean)
                 .overlay {
-                    LinearGradient(
-                        colors: [.clear, DSHColor.ocean, .clear],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
+                    GeometryReader { geo in
+                        LinearGradient(
+                            colors: [.clear, .white.opacity(0.85), .clear],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: 70)
+                        .offset(x: -70 + (geo.size.width + 140) * sweep)
+                        .animation(.linear(duration: 1.8).repeatForever(autoreverses: false), value: sweep)
+                        .onAppear { sweep = 1 }
+                    }
                     .mask(Text("深度求索中…").font(.subheadline.weight(.semibold)))
-                    .offset(x: 70 * sweep)
-                    .animation(.linear(duration: 1.8).repeatForever(autoreverses: false), value: sweep)
-                    .onAppear { sweep = 1 }
                 }
                 .clipped()
                 .accessibilityLabel("深度求索中")
