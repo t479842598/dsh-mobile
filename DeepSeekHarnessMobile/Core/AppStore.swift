@@ -100,6 +100,8 @@ final class AppStore: ObservableObject {
     /// 服务端随历史页下发的格式版本：续取旧页时必须原样带回，否则被拒收
     ///（History format mismatch）。新一轮最新页加载时重置。
     private var historyFormatVersions: [String: Int] = [:]
+    /// hello 握手下发的全局历史格式版本：尚无本会话页版本时的兜底。
+    private var gatewayHistoryFormatVersion: Int?
     private var historyBatchPageCounts: [String: Int] = [:]
     private var historyBatchKinds: [String: HistoryBatchKind] = [:]
     private var historyLoadedEventCounts: [String: Int] = [:]
@@ -484,7 +486,7 @@ final class AppStore: ObservableObject {
             maxMessages: 60,
             maxBytes: Self.historyPageByteBudget,
             view: "conversation",
-            historyFormatVersion: historyFormatVersions[sessionId]
+            historyFormatVersion: historyFormatVersions[sessionId] ?? gatewayHistoryFormatVersion
         )
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(20))
@@ -738,6 +740,9 @@ final class AppStore: ObservableObject {
             pendingQuestionRequests.removeAll()
             questionRequestStatuses.removeAll()
             supportsImages = (frame.protocol ?? 1) >= 3 && (frame.capabilities ?? []).contains("images")
+            if let formatVersion = frame.historyFormatVersion {
+                gatewayHistoryFormatVersion = formatVersion
+            }
             inFlightImageAttachmentIDs.removeAll()
             queuedImageAttachmentIDs.removeAll()
             imageAttachmentQueue.removeAll()

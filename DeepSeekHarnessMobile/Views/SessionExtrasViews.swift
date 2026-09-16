@@ -330,42 +330,54 @@ struct NoticeListView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                if store.protocolNotices.isEmpty {
-                    VStack(spacing: 10) {
-                        Image(systemName: "bell.slash")
-                            .font(.system(size: 34))
-                            .foregroundStyle(.secondary)
-                        Text("暂无通知")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(store.protocolNotices.reversed()) { item in
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: item.isError ? "exclamationmark.triangle.fill" : "bell.fill")
-                                        .font(.caption)
-                                        .foregroundStyle(item.isError ? Color.red : DSHColor.ocean)
-                                    Text(item.title)
-                                        .font(.subheadline.weight(.medium))
-                                        .lineLimit(1)
-                                    Spacer()
-                                    Text(item.date, style: .time)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
+            ZStack {
+                Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
+                Group {
+                    if store.protocolNotices.isEmpty {
+                        VStack(spacing: 10) {
+                            Image(systemName: "bell.slash")
+                                .font(.system(size: 34))
+                                .foregroundStyle(.secondary)
+                            Text("暂无通知")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 12) {
+                                ForEach(store.protocolNotices.reversed()) { item in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: item.isError ? "exclamationmark.triangle.fill" : "bell.fill")
+                                                .font(.caption)
+                                                .foregroundStyle(item.isError ? Color.red : DSHColor.ocean)
+                                            Text(item.title)
+                                                .font(.subheadline.weight(.medium))
+                                                .foregroundStyle(.primary)
+                                                .lineLimit(1)
+                                            Spacer()
+                                            Text(item.date, style: .time)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Text(item.text)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(3)
+                                    }
+                                    .padding(12)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        Color(uiColor: .secondarySystemGroupedBackground),
+                                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    )
                                 }
-                                Text(item.text)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(3)
                             }
-                            .padding(.vertical, 3)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
                         }
                     }
-                    .listStyle(.insetGrouped)
                 }
             }
             .navigationTitle("通知中心 · \(store.protocolNotices.count)")

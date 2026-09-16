@@ -3,6 +3,13 @@
 本文件记录 dsh-mobile（DeepSeek Harness 移动客户端：iOS / Android）的版本变更。
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循语义化版本。
 
+## [1.6.8] - 2026-09-16
+
+- iOS 历史分页带上服务端下发的格式版本（缺失时用 hello 握手版本兜底），不再被
+  网关以 History format mismatch 拒收。
+- iOS 通知中心改 ScrollView 卡片直排 + 显式底色，大 detent 不再全白。
+- 两端版本号统一为 `1.6.8`（Android build 16 / iOS build 12）。
+
 ## [1.6.6] - 2026-09-16
 
 - iOS 删除直连栈（`DshDirectConnect.swift` 整文件移除，工程引用与直连单测同步清理），
