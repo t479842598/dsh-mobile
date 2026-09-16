@@ -796,16 +796,31 @@ private fun ConversationTimeline(
         }
     }
     val hasStreamingItem = selectedSessionIsRunning
+    // 思考/工具等过程内容经常在同 entry 内变长，timelineEntries.size 不变，
+    // 只靠 size 会漏跟。用非用户消息的全量签名兜底，新增过程行必触发跟尾。
+    val processFollowSig = remember(items) {
+        var acc = 0
+        for (item in items) {
+            if (item.kind == ConversationItemKind.USER) continue
+            acc = acc * 31 + item.id.hashCode()
+            acc = acc * 31 + item.text.length
+        }
+        acc
+    }
     LaunchedEffect(
         timelineEntries.size,
         items.lastOrNull()?.text?.length,
+        processFollowSig,
         initialPositionApplied,
         hasStreamingItem,
         // 底部计划/目标/统计面板展开时会直接占用输入框上方空间（bottomContentHeight 增大）。
         // 已贴底时必须同步跟尾，否则新长出的面板会盖住正在执行的对话尾部。
         bottomContentHeight
     ) {
-        if (initialPositionApplied && isPinnedToBottom && !isFingerDown && timelineEntries.isNotEmpty()) {
+        // 点按展开行会脱离置底，但只要还停在底部就粘住跟尾；
+        // 只有真正往上翻（还能继续往下滚）才不跟。
+        val stickToBottom = isPinnedToBottom || !listState.canScrollForward
+        if (initialPositionApplied && stickToBottom && !isFingerDown && timelineEntries.isNotEmpty()) {
             programmaticScrollCount += 1
             try {
                 listState.scrollToTimelineBottom(
@@ -814,6 +829,10 @@ private fun ConversationTimeline(
                 )
             } finally {
                 programmaticScrollCount -= 1
+            }
+            if (!isPinnedToBottom) {
+                isPinnedToBottom = true
+                currentOnPinnedToBottomChanged(true)
             }
         }
     }
