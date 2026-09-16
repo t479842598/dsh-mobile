@@ -3,6 +3,12 @@
 本文件记录 dsh-mobile（DeepSeek Harness 移动客户端：iOS / Android）的版本变更。
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循语义化版本。
 
+## [1.6.9] - 2026-09-16
+
+- iOS 流式思考独立成行：TextKit 直追全文、头部常驻最新一行概览 + 转圈，
+  走轻量更新通道，贴底时自动跟随到最新内容（对齐安卓端）。
+- 两端版本号统一为 `1.6.9`（Android build 17 / iOS build 13）。
+
 ## [1.6.8] - 2026-09-16
 
 - iOS 历史分页带上服务端下发的格式版本（缺失时用 hello 握手版本兜底），不再被

@@ -7,6 +7,10 @@ struct ConversationViewportEntry: Identifiable {
         let text: String
     }
 
+    struct StreamingReasoning {
+        let text: String
+    }
+
     struct UserMessage {
         struct Image {
             let id: String
@@ -25,6 +29,7 @@ struct ConversationViewportEntry: Identifiable {
     let revision: Int
     let content: AnyView
     let streamingAssistant: StreamingAssistant?
+    let streamingReasoning: StreamingReasoning?
     let userMessage: UserMessage?
     let allowsHeightCaching: Bool
 
@@ -34,6 +39,7 @@ struct ConversationViewportEntry: Identifiable {
         self.content = content
         self.allowsHeightCaching = allowsHeightCaching
         streamingAssistant = nil
+        streamingReasoning = nil
         userMessage = nil
     }
 
@@ -42,6 +48,17 @@ struct ConversationViewportEntry: Identifiable {
         self.revision = revision
         content = AnyView(EmptyView())
         self.streamingAssistant = streamingAssistant
+        self.streamingReasoning = nil
+        userMessage = nil
+        allowsHeightCaching = false
+    }
+
+    init(id: String, revision: Int, streamingReasoning: StreamingReasoning) {
+        self.id = id
+        self.revision = revision
+        content = AnyView(EmptyView())
+        streamingAssistant = nil
+        self.streamingReasoning = streamingReasoning
         userMessage = nil
         allowsHeightCaching = false
     }
@@ -51,6 +68,7 @@ struct ConversationViewportEntry: Identifiable {
         self.revision = revision
         content = AnyView(EmptyView())
         streamingAssistant = nil
+        self.streamingReasoning = nil
         self.userMessage = userMessage
         allowsHeightCaching = true
     }
@@ -271,6 +289,10 @@ final class ConversationViewportController: UIViewController, UICollectionViewDe
             forCellWithReuseIdentifier: StreamingAssistantCell.reuseIdentifier
         )
         collectionView.register(
+            StreamingReasoningCell.self,
+            forCellWithReuseIdentifier: StreamingReasoningCell.reuseIdentifier
+        )
+        collectionView.register(
             UserMessageCell.self,
             forCellWithReuseIdentifier: UserMessageCell.reuseIdentifier
         )
@@ -292,6 +314,14 @@ final class ConversationViewportController: UIViewController, UICollectionViewDe
                     for: indexPath
                 ) as! StreamingAssistantCell
                 cell.apply(streamingAssistant)
+                return cell
+            }
+            if let streamingReasoning = entry.streamingReasoning {
+                let cell = collectionView.dequeueReusableCell(
+                    withReuseIdentifier: StreamingReasoningCell.reuseIdentifier,
+                    for: indexPath
+                ) as! StreamingReasoningCell
+                cell.apply(streamingReasoning)
                 return cell
             }
             if let userMessage = entry.userMessage {
@@ -422,7 +452,9 @@ final class ConversationViewportController: UIViewController, UICollectionViewDe
             return
         }
         let streamingChanged = changed.filter { id in
-            previousRevisions[id] != nil && entriesByID[id]?.streamingAssistant != nil
+            guard previousRevisions[id] != nil,
+                  let entry = entriesByID[id] else { return false }
+            return entry.streamingAssistant != nil || entry.streamingReasoning != nil
         }
         // Attachment bytes arrive after their message metadata. The image has
         // already reserved its final size from width/height, so replacing the
@@ -497,11 +529,17 @@ final class ConversationViewportController: UIViewController, UICollectionViewDe
     private func updateVisibleStreamingCells(_ ids: [String]) {
         var invalidatedIndexPaths: [IndexPath] = []
         for id in ids {
-            guard let payload = entriesByID[id]?.streamingAssistant,
-                  let indexPath = dataSource.indexPath(for: id),
-                  let cell = collectionView.cellForItem(at: indexPath) as? StreamingAssistantCell,
-                  cell.apply(payload) else { continue }
-            invalidatedIndexPaths.append(indexPath)
+            guard let entry = entriesByID[id],
+                  let indexPath = dataSource.indexPath(for: id) else { continue }
+            if let payload = entry.streamingAssistant,
+               let cell = collectionView.cellForItem(at: indexPath) as? StreamingAssistantCell,
+               cell.apply(payload) {
+                invalidatedIndexPaths.append(indexPath)
+            } else if let payload = entry.streamingReasoning,
+                      let cell = collectionView.cellForItem(at: indexPath) as? StreamingReasoningCell,
+                      cell.apply(payload) {
+                invalidatedIndexPaths.append(indexPath)
+            }
         }
         guard !invalidatedIndexPaths.isEmpty else { return }
         let context = UICollectionViewLayoutInvalidationContext()
@@ -1560,6 +1598,146 @@ private final class StreamingAssistantCell: StableSelfSizingCollectionViewCell {
             attributes: [
                 .font: UIFont.preferredFont(forTextStyle: .body),
                 .foregroundColor: UIColor.label
+            ]
+        )
+    }
+}
+
+/// 流式思考行：与 StreamingAssistantCell 同一套 TextKit 直追策略——只向
+/// 已排好的 NSTextStorage 追加后缀，不重建整行，避免每个 reasoning token
+/// 都触发自适应 collection 布局 reconciliation 造成抖动/重叠。
+/// 头部常驻最新一行概览（对齐安卓端 running 取最新行），正文全文实时展开。
+private final class StreamingReasoningCell: StableSelfSizingCollectionViewCell {
+    static let reuseIdentifier = "StreamingReasoningCell"
+
+    private let iconView: UIImageView = {
+        let view = UIImageView(image: UIImage(systemName: "sparkles"))
+        view.tintColor = UIColor(red: 0.48, green: 0.33, blue: 0.78, alpha: 1)
+        view.contentMode = .scaleAspectFit
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
+
+    private let titleLabel: UILabel = {
+        let label = UILabel()
+        label.font = .preferredFont(forTextStyle: .subheadline).withWeight(.semibold)
+        label.textColor = UIColor(red: 0.48, green: 0.33, blue: 0.78, alpha: 1)
+        label.text = "Think"
+        label.adjustsFontForContentSizeCategory = true
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        return label
+    }()
+
+    private let previewLabel: UILabel = {
+        let label = UILabel()
+        label.font = .preferredFont(forTextStyle: .subheadline)
+        label.textColor = .secondaryLabel
+        label.adjustsFontForContentSizeCategory = true
+        // 只留一行并从尾部截断：天然尾随最新内容，无需手动滚动。
+        label.numberOfLines = 1
+        label.lineBreakMode = .byTruncatingHead
+        return label
+    }()
+
+    private let spinner: UIActivityIndicatorView = {
+        let view = UIActivityIndicatorView(style: .medium)
+        view.hidesWhenStopped = false
+        view.color = UIColor(red: 0.18, green: 0.42, blue: 0.9, alpha: 1)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.startAnimating()
+        view.accessibilityLabel = String(localized: "正在思考")
+        return view
+    }()
+
+    private let textView: UITextView = {
+        let view = UITextView()
+        view.backgroundColor = .clear
+        view.isEditable = false
+        view.isSelectable = false
+        view.isScrollEnabled = false
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.font = .preferredFont(forTextStyle: .body)
+        view.textColor = .secondaryLabel
+        view.adjustsFontForContentSizeCategory = true
+        view.setContentCompressionResistancePriority(.required, for: .vertical)
+        return view
+    }()
+
+    private var renderedText = ""
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        contentView.backgroundColor = .clear
+
+        let header = UIStackView(arrangedSubviews: [iconView, titleLabel, previewLabel, spinner])
+        header.axis = .horizontal
+        header.alignment = .center
+        header.spacing = 8
+
+        let stack = UIStackView(arrangedSubviews: [header, textView])
+        stack.axis = .vertical
+        stack.alignment = .fill
+        stack.spacing = 7
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            iconView.widthAnchor.constraint(equalToConstant: 18),
+            iconView.heightAnchor.constraint(equalToConstant: 18),
+            spinner.widthAnchor.constraint(equalToConstant: 16),
+            spinner.heightAnchor.constraint(equalToConstant: 16),
+            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
+            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 7),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -7)
+        ])
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        renderedText = ""
+        previewLabel.text = nil
+        textView.textStorage.setAttributedString(NSAttributedString())
+    }
+
+    @discardableResult
+    func apply(_ payload: ConversationViewportEntry.StreamingReasoning) -> Bool {
+        guard payload.text != renderedText else { return false }
+
+        if payload.text.hasPrefix(renderedText) {
+            let suffix = String(payload.text.dropFirst(renderedText.count))
+            textView.textStorage.append(attributed(suffix))
+        } else {
+            // 重连修正等少数非追加场景仍以服务端累计状态为准。
+            textView.textStorage.setAttributedString(attributed(payload.text))
+        }
+        renderedText = payload.text
+        previewLabel.text = Self.latestLine(payload.text)
+        textView.invalidateIntrinsicContentSize()
+        setNeedsLayout()
+        return true
+    }
+
+    private static func latestLine(_ text: String) -> String {
+        let visible = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !visible.isEmpty else { return "" }
+        let line = visible.components(separatedBy: .newlines).last ?? ""
+        return line
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func attributed(_ text: String) -> NSAttributedString {
+        NSAttributedString(
+            string: text,
+            attributes: [
+                .font: UIFont.preferredFont(forTextStyle: .body),
+                .foregroundColor: UIColor.secondaryLabel
             ]
         )
     }

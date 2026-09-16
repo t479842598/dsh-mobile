@@ -984,20 +984,22 @@ struct ConversationView: View {
             if case .process = $0.content { return true }
             return false
         })?.id
-        var result = displayEntries.map { entry in
+        var result: [ConversationViewportEntry] = []
+        for entry in displayEntries {
             let revision = viewportEntryRevision(entry)
             if case .message(let item) = entry.content,
                item.kind == .assistant,
                item.title.contains("正在生成") {
-                return ConversationViewportEntry(
+                result.append(ConversationViewportEntry(
                     id: entry.id,
                     revision: revision,
                     streamingAssistant: .init(title: item.title, text: item.text)
-                )
+                ))
+                continue
             }
             if case .message(let item) = entry.content,
                item.kind == .user {
-                return ConversationViewportEntry(
+                result.append(ConversationViewportEntry(
                     id: entry.id,
                     revision: revision,
                     userMessage: .init(
@@ -1013,7 +1015,8 @@ struct ConversationView: View {
                         },
                         showsCopyButton: entry.showsCopyButton
                     )
-                )
+                ))
+                continue
             }
             let content: AnyView
             let allowsHeightCaching: Bool
@@ -1030,24 +1033,56 @@ struct ConversationView: View {
                 // these rows live instead of replaying a premature short cache.
                 allowsHeightCaching = !MarkdownViewportSizing.requiresLiveMeasurement(item.text)
             case .process(let group):
-                content = AnyView(
-                    ConversationProcessRow(group: group, isRunning: sessionRunning && entry.id == lastProcessID)
-                        .environment(\.conversationDisclosureWillToggle) {
-                            viewportProxy.invalidateHeight(for: entry.id)
-                        }
+                // 组内流式思考抽出来单独成行，用 TextKit cell 实时直追
+                //（对齐安卓端）；沉淀内容留在组行里，组行高度保持稳定。
+                let liveReasoning = group.items.filter {
+                    $0.kind == .reasoning && $0.title.contains("正在推理")
+                }
+                let settledGroup = liveReasoning.isEmpty ? group : ConversationProcessGroup(
+                    id: group.id,
+                    items: group.items.filter {
+                        !($0.kind == .reasoning && $0.title.contains("正在推理"))
+                    }
                 )
-                // Collapsed process rows are immutable while scrolling. Cache
-                // their settled height just like completed Markdown rows; the
-                // environment callback evicts and remeasures only this item
-                // when a nested disclosure is explicitly toggled.
-                allowsHeightCaching = true
+                // 组被抽空（只剩流式思考）时不留空行。
+                if !settledGroup.items.isEmpty {
+                    content = AnyView(
+                        ConversationProcessRow(group: settledGroup, isRunning: sessionRunning && entry.id == lastProcessID)
+                            .environment(\.conversationDisclosureWillToggle) {
+                                viewportProxy.invalidateHeight(for: entry.id)
+                            }
+                    )
+                    // Collapsed process rows are immutable while scrolling. Cache
+                    // their settled height just like completed Markdown rows; the
+                    // environment callback evicts and remeasures only this item
+                    // when a nested disclosure is explicitly toggled.
+                    allowsHeightCaching = true
+                    result.append(ConversationViewportEntry(
+                        id: entry.id,
+                        revision: revision,
+                        content: content,
+                        allowsHeightCaching: allowsHeightCaching
+                    ))
+                }
+                for item in liveReasoning {
+                    var reasonHasher = Hasher()
+                    reasonHasher.combine("stream-reason")
+                    reasonHasher.combine(item.id)
+                    reasonHasher.combine(item.text)
+                    result.append(ConversationViewportEntry(
+                        id: "stream-reason-\(item.id)",
+                        revision: reasonHasher.finalize(),
+                        streamingReasoning: .init(text: item.text)
+                    ))
+                }
+                continue
             }
-            return ConversationViewportEntry(
+            result.append(ConversationViewportEntry(
                 id: entry.id,
                 revision: revision,
                 content: content,
                 allowsHeightCaching: allowsHeightCaching
-            )
+            ))
         }
         // 网页版同款整轮级状态行：运行全程常驻流底部，不按 step 闪烁。
         if store.selectedSession?.isRunning == true {
