@@ -1587,7 +1587,7 @@ private struct TurnStatusRow: View {
     }
 
     private var elapsedText: String? {
-        guard let startTime else { return nil }
+        guard let startTime = startTime else { return nil }
         let seconds = max(0, Int(now.timeIntervalSince(startTime)))
         guard seconds >= 15 else { return nil }
         let h = seconds / 3600, m = (seconds / 60) % 60, s = seconds % 60
@@ -1886,9 +1886,10 @@ private struct ConversationProcessRow: View {
     var body: some View {
         // 思考段—工具包按事件时间交错直排（对齐网页版与安卓端）。
         let segments = group.segments
+        let lastSegmentID = segments.last?.id
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
-                let running = isRunning && index == segments.count - 1
+            ForEach(segments) { segment in
+                let running = isRunning && segment.id == lastSegmentID
                 switch segment {
                 case .think(let items):
                     ConversationReasoningDisclosure(

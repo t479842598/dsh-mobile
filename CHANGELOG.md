@@ -3,6 +3,12 @@
 本文件记录 dsh-mobile（DeepSeek Harness 移动客户端：iOS / Android）的版本变更。
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循语义化版本。
 
+## [1.6.2] - 2026-09-16
+
+iOS 切回上游网关桥模式（`ws://host:3080/ws/mobile` + 扫码/手动配对），直连栈保留
+未接线；修复过程行 `ForEach` 身份键导致的编译失败。两端版本号统一为 `1.6.2`
+（Android build 13 / iOS build 9）。
+
 ## [1.6.0] - 2026-09-16
 
 双端对话流对齐网页版：assistant 正文去图标去标题、底部整轮级"深度求索中…"
