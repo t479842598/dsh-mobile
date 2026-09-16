@@ -19,6 +19,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
@@ -85,6 +86,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -715,6 +717,11 @@ private fun ConversationTimeline(
     )
     var initialPositionApplied by remember { mutableStateOf(false) }
     var isPinnedToBottom by remember { mutableStateOf(true) }
+    // 手指按下期间暂停自动跟尾：流式滚动会让内容在手指下移动，
+    // 按下抬起落在不同行，点击就会被取消而"点不动"。
+    var isFingerDown by remember { mutableStateOf(false) }
+    val currentOnUserInteraction by rememberUpdatedState(onUserInteraction)
+    val currentOnPinnedToBottomChanged by rememberUpdatedState(onPinnedToBottomChanged)
     var programmaticScrollCount by remember { mutableIntStateOf(0) }
     var timelineUpdatesPaused by remember(selectedSessionId) { mutableStateOf(false) }
     val isUserTimelineScrolling by remember(listState) {
@@ -798,7 +805,7 @@ private fun ConversationTimeline(
         // 已贴底时必须同步跟尾，否则新长出的面板会盖住正在执行的对话尾部。
         bottomContentHeight
     ) {
-        if (initialPositionApplied && isPinnedToBottom && timelineEntries.isNotEmpty()) {
+        if (initialPositionApplied && isPinnedToBottom && !isFingerDown && timelineEntries.isNotEmpty()) {
             programmaticScrollCount += 1
             try {
                 listState.scrollToTimelineBottom(
@@ -881,13 +888,25 @@ private fun ConversationTimeline(
         Modifier
             .fillMaxSize()
             .testTag("conversation-timeline")
-            .pointerInput(onUserInteraction) {
+            .pointerInput(Unit) {
                 awaitEachGesture {
                     awaitFirstDown(
                         requireUnconsumed = false,
                         pass = PointerEventPass.Initial
                     )
-                    onUserInteraction()
+                    currentOnUserInteraction()
+                    isFingerDown = true
+                    // 按下即脱离跟尾：列表停住，手指下的行才点得中；
+                    // 想继续跟，点右下角回到底部按钮即可。
+                    if (isPinnedToBottom) {
+                        isPinnedToBottom = false
+                        currentOnPinnedToBottomChanged(false)
+                    }
+                    try {
+                        waitForUpOrCancellation()
+                    } finally {
+                        isFingerDown = false
+                    }
                 }
             }
     ) {
@@ -2067,7 +2086,7 @@ private fun ProcessCommandRow(
         Row(
             modifier = Modifier.fillMaxWidth().clickable(enabled = expandable) {
                 if (expandable) expanded = !expanded
-            },
+            }.padding(vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
@@ -2176,7 +2195,7 @@ private fun ProcessToolBundle(
 ) {
     val names = tools.mapNotNull { it.call?.title }.take(2)
     ProcessDisclosure(
-        id = "tools-$groupId",
+        id = "tools-${tools.firstOrNull()?.id ?: groupId}",
         title = "${tools.size} 次工具调用",
         preview = names.joinToString("、"),
         iconRes = R.drawable.ic_process_tool,
@@ -2251,7 +2270,8 @@ private fun ProcessDisclosure(
     var expanded by remember(id) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Row(
-            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
+            // clickable 在 padding 外层：上下各 2dp 都算点击热区，行太矮手指点不中。
+            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
