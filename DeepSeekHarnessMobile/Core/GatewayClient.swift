@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-// 非 final：DshDirectClient 以继承方式复用同一公开接口（见 Core/DshDirectConnect.swift）。
+// 非 final：保留子类扩展点（直连栈已移除，见 git 历史）。
 @MainActor
 class GatewayClient: ObservableObject {
     /// History responses contain raw trajectory events (including request

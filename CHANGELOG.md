@@ -3,6 +3,12 @@
 本文件记录 dsh-mobile（DeepSeek Harness 移动客户端：iOS / Android）的版本变更。
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循语义化版本。
 
+## [1.6.6] - 2026-09-16
+
+- iOS 删除直连栈（`DshDirectConnect.swift` 整文件移除，工程引用与直连单测同步清理），
+  iOS 即上游网关桥模式；今天的对话页样式（去头、深度求索中状态行、思考/工具交错）保留。
+- 两端版本号统一为 `1.6.6`（Android build 15 / iOS build 11）。
+
 ## [1.6.5] - 2026-09-16
 
 - iOS 手动配对表恢复扫码入口（工具栏"扫码"按钮），扫完自动填表并连接。
