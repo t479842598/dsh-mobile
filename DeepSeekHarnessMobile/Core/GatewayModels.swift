@@ -81,6 +81,8 @@ struct GatewayFrame: Codable, Sendable {
     var events: [RawSessionEvent]?
     var hasMore: Bool?
     var nextBeforeSeq: Int?
+    var todos: [GatewayTask]?
+    var goal: GatewayGoalSnapshot?
     /// 网关历史格式版本：分页续取时必须原样带回（对齐上游），缺失会被拒收。
     var historyFormatVersion: Int?
     var bytes: Int?
@@ -523,6 +525,45 @@ struct GatewaySessionStatsSnapshot: Hashable, Sendable {
     var stats: GatewaySessionStats? = nil
     var tokenUsage: GatewaySessionTokenUsage? = nil
     var contextPressure: GatewayContextPressure? = nil
+}
+
+/// WebUI todo_write 投影；移动端仅展示，不直接修改。
+struct GatewayTask: Codable, Hashable, Sendable {
+    var content: String
+    var status: String
+}
+
+struct GatewayTaskListSnapshot: Hashable, Sendable {
+    var asOfSeq: Int? = nil
+    var tasks: [GatewayTask]? = nil
+}
+
+/// Goal 写入的 compare-and-set 引用，防止多端以旧版本覆盖新修改。
+struct GatewayGoalRef: Codable, Hashable, Sendable {
+    var id: String
+    var revision: Int
+}
+
+struct GatewayGoalDefinition: Codable, Hashable, Sendable {
+    var id: String
+    var revision: Int
+    var objective: String
+    var phase: String
+    var maxGoalRounds: Int? = nil
+
+    var ref: GatewayGoalRef { GatewayGoalRef(id: id, revision: revision) }
+}
+
+struct GatewayGoalSnapshot: Codable, Hashable, Sendable {
+    var goal: GatewayGoalDefinition
+    var roundsStarted: Int = 0
+    var createdAt: Double? = nil
+    var updatedAt: Double? = nil
+}
+
+struct GatewayGoalProjection: Hashable, Sendable {
+    var asOfSeq: Int? = nil
+    var goal: GatewayGoalSnapshot? = nil
 }
 
 struct RawSessionEvent: Codable, Hashable, Sendable {

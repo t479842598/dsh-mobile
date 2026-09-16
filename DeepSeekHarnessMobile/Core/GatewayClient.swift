@@ -218,6 +218,29 @@ class GatewayClient: ObservableObject {
     func requestSessionStats(sessionId: String) {
         send(["type": "session-stats", "sessionId": sessionId])
     }
+    func requestTasks(sessionId: String) {
+        send(["type": "tasks", "sessionId": sessionId])
+    }
+    func requestGoal(sessionId: String) {
+        send(["type": "goal", "sessionId": sessionId])
+    }
+    func pauseGoal(sessionId: String, ref: GatewayGoalRef) {
+        send(["type": "goal-pause", "sessionId": sessionId, "ref": ["id": ref.id, "revision": ref.revision]])
+    }
+    func resumeGoal(sessionId: String, ref: GatewayGoalRef) {
+        send(["type": "goal-resume", "sessionId": sessionId, "ref": ["id": ref.id, "revision": ref.revision]])
+    }
+    func clearGoal(sessionId: String, ref: GatewayGoalRef) {
+        send(["type": "goal-clear", "sessionId": sessionId, "ref": ["id": ref.id, "revision": ref.revision]])
+    }
+    func editGoal(sessionId: String, ref: GatewayGoalRef, objective: String) {
+        send([
+            "type": "goal-edit",
+            "sessionId": sessionId,
+            "ref": ["id": ref.id, "revision": ref.revision],
+            "objective": objective
+        ])
+    }
     func requestAgentPresets() {
         send(["type": "agent-presets"])
     }

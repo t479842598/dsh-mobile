@@ -719,11 +719,20 @@ final class ConversationViewportController: UIViewController, UICollectionViewDe
         // rubber-band overscroll (`contentOffset.y > maximumOffsetY`). Keep the
         // viewport pinned through that bounce and reveal the jump button only
         // after the user has actually moved away from the tail.
-        setPinned(isAtBottom(scrollView))
-        if !isProgrammaticScroll,
-           (scrollView.isDragging || scrollView.isDecelerating),
-           scrollView.contentOffset.y + scrollView.adjustedContentInset.top < 420 {
-            onApproachingTop()
+        //
+        // 自适应高度在布局抖动时会产生非用户滚动回调：此时绝不能误判为脱离
+        // 底部，否则一次历史加载/流式增长就会永久丢失跟尾。只响应真实手势，
+        // 静止时若回到/保持底部则恢复跟尾（点按展开行后仍粘住）。
+        if isProgrammaticScroll {
+            return
+        }
+        if scrollView.isDragging || scrollView.isDecelerating {
+            setPinned(isAtBottom(scrollView))
+            if scrollView.contentOffset.y + scrollView.adjustedContentInset.top < 420 {
+                onApproachingTop()
+            }
+        } else if isAtBottom(scrollView) {
+            setPinned(true)
         }
     }
 

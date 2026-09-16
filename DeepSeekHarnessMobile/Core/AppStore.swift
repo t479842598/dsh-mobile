@@ -79,6 +79,10 @@ final class AppStore: ObservableObject {
     @Published var sessionPermissions: [String: GatewaySessionPermissions] = [:]
     @Published var contextSnapshots: [String: GatewayContextSnapshot] = [:]
     @Published var sessionStatsSnapshots: [String: GatewaySessionStatsSnapshot] = [:]
+    @Published var taskSnapshots: [String: GatewayTaskListSnapshot] = [:]
+    @Published var goalSnapshots: [String: GatewayGoalProjection] = [:]
+    /// 目标变更进行中（pause/resume/edit/clear）：显示转圈，收到新 goal 帧后清除。
+    @Published var goalMutationKind: String? = nil
     @Published var sessionControlLoadingKinds: Set<String> = []
     @Published var agentPresets: [GatewayAgentPreset] = []
     @Published var agentPresetsAuthorable = false
@@ -189,6 +193,12 @@ final class AppStore: ObservableObject {
     var selectedModelCatalog: GatewayModelCatalog? { selectedSessionId.flatMap { modelCatalogs[$0] } }
     var selectedPermissions: GatewaySessionPermissions? { selectedSessionId.flatMap { sessionPermissions[$0] } }
     var selectedContextSnapshot: GatewayContextSnapshot? { selectedSessionId.flatMap { contextSnapshots[$0] } }
+    /// 同一会话只接受不早于当前水位的投影更新（对齐共享层）。
+    private static func projectionIsNotOlder(_ candidate: Int?, _ existing: Int?) -> Bool {
+        guard let candidate, let existing else { return true }
+        return candidate >= existing
+    }
+
     var selectedSessionStatsSnapshot: GatewaySessionStatsSnapshot? { selectedSessionId.flatMap { sessionStatsSnapshots[$0] } }
     var selectedPendingQuestionRequest: GatewayPendingQuestionRequest? {
         guard let selectedSessionId else { return nil }
@@ -648,6 +658,8 @@ final class AppStore: ObservableObject {
         gateway.requestPermissionOptions(sessionId: sessionId)
         gateway.requestContextUsage(sessionId: sessionId)
         gateway.requestSessionStats(sessionId: sessionId)
+        gateway.requestTasks(sessionId: sessionId)
+        gateway.requestGoal(sessionId: sessionId)
     }
     func selectModel(provider: String, model: String, reasoningEffort: String?) {
         guard let sessionId = selectedSessionId else { return }
@@ -668,6 +680,58 @@ final class AppStore: ObservableObject {
         }
         beginSessionControlRequest("permission")
         gateway.setPermission(sessionId: sessionId, name: name)
+    }
+
+    // MARK: - 任务与目标（对齐安卓 TaskGoalUi）
+
+    var selectedTaskSnapshot: GatewayTaskListSnapshot? {
+        selectedSessionId.flatMap { taskSnapshots[$0] }
+    }
+
+    var selectedGoalSnapshot: GatewayGoalProjection? {
+        selectedSessionId.flatMap { goalSnapshots[$0] }
+    }
+
+    private func mutateGoal(_ kind: String, _ send: (String, GatewayGoalRef) -> Void) {
+        guard let sessionId = selectedSessionId,
+              gateway.state.isConnected else { return }
+        guard let ref = selectedGoalSnapshot?.goal?.goal.ref else { return }
+        guard goalMutationKind == nil else { return }
+        goalMutationKind = kind
+        send(sessionId, ref)
+        // 服务端正常会广播新的 goal 帧清掉转圈；20 秒无回音则兜底清除。
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard let self, self.goalMutationKind == kind else { return }
+            self.goalMutationKind = nil
+        }
+    }
+
+    func pauseGoal() { mutateGoal("goal-pause", gateway.pauseGoal) }
+    func resumeGoal() { mutateGoal("goal-resume", gateway.resumeGoal) }
+    func clearGoal() { mutateGoal("goal-clear", gateway.clearGoal) }
+
+    func editGoal(_ objective: String) {
+        let trimmed = objective.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let sessionId = selectedSessionId,
+              gateway.state.isConnected,
+              let ref = selectedGoalSnapshot?.goal?.goal.ref,
+              goalMutationKind == nil else { return }
+        goalMutationKind = "goal-edit"
+        gateway.editGoal(sessionId: sessionId, ref: ref, objective: trimmed)
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard let self, self.goalMutationKind == "goal-edit" else { return }
+            self.goalMutationKind = nil
+        }
+    }
+
+    func refreshTasksAndGoal() {
+        guard let sessionId = selectedSessionId,
+              gateway.state.isConnected else { return }
+        gateway.requestTasks(sessionId: sessionId)
+        gateway.requestGoal(sessionId: sessionId)
     }
     @discardableResult
     func send(_ text: String, images: [GatewayOutgoingImage] = []) -> Bool {
@@ -891,6 +955,25 @@ final class AppStore: ObservableObject {
                 sessionStatsSnapshots[id] = snapshot
             }
             finishSessionControlRequest("session-stats")
+        case "tasks", "tasks-updated":
+            if let id = frame.sessionId ?? selectedSessionId {
+                let candidate = GatewayTaskListSnapshot(asOfSeq: frame.asOfSeq, tasks: frame.todos)
+                let existing = taskSnapshots[id]
+                if existing == nil || Self.projectionIsNotOlder(candidate.asOfSeq, existing?.asOfSeq) {
+                    taskSnapshots[id] = candidate
+                }
+            }
+        case "goal", "goal-updated":
+            if let id = frame.sessionId ?? selectedSessionId {
+                let candidate = GatewayGoalProjection(asOfSeq: frame.asOfSeq, goal: frame.goal)
+                let existing = goalSnapshots[id]
+                if existing == nil || Self.projectionIsNotOlder(candidate.asOfSeq, existing?.asOfSeq) {
+                    goalSnapshots[id] = candidate
+                }
+                if goalMutationKind != nil {
+                    goalMutationKind = nil
+                }
+            }
         case "directories":
             directoryIsLoading = false
             directoryPath = frame.path

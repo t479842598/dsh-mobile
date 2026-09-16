@@ -322,6 +322,226 @@ private struct SubagentTranscriptLine: Identifiable, Hashable {
     let isMine: Bool
 }
 
+// MARK: - 任务 / 目标面板（输入框上方占位，对齐安卓 TaskGoalUi）
+
+// 输入框上方的任务/目标面板：直接占位把对话顶上去（高度计入 composerHeight），
+// 而不是盖在正在执行的对话上。complete 的目标只留作历史，不再占位。
+struct TaskGoalPanels: View {
+    @EnvironmentObject private var store: AppStore
+    @State private var tasksExpanded = false
+    @State private var showGoalEditor = false
+    @State private var confirmGoalClear = false
+    @State private var goalDraft = ""
+
+    private var tasks: [GatewayTask]? {
+        store.selectedSessionId.flatMap { store.taskSnapshots[$0]?.tasks }
+    }
+
+    private var goal: GatewayGoalDefinition? {
+        guard let definition = store.selectedSessionId.flatMap({ store.goalSnapshots[$0]?.goal?.goal }),
+              definition.phase.lowercased() != "complete" else { return nil }
+        return definition
+    }
+
+    var body: some View {
+        if tasks != nil || goal != nil {
+            VStack(spacing: 8) {
+                if let tasks {
+                    TaskPanel(tasks: tasks, expanded: $tasksExpanded)
+                }
+                if let goal {
+                    GoalPanel(
+                        phase: goal.phase,
+                        objective: goal.objective,
+                        mutationKind: store.goalMutationKind,
+                        onPauseResume: {
+                            if goal.phase == "active" { store.pauseGoal() }
+                            else { store.resumeGoal() }
+                        },
+                        onEdit: {
+                            goalDraft = goal.objective
+                            showGoalEditor = true
+                        },
+                        onClear: { confirmGoalClear = true }
+                    )
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 6)
+            .id(store.selectedSessionId)
+            .alert("编辑目标", isPresented: $showGoalEditor) {
+                TextField("目标", text: $goalDraft, axis: .vertical)
+                    .lineLimit(3...6)
+                Button("保存") {
+                    store.editGoal(goalDraft)
+                    showGoalEditor = false
+                }
+                Button("取消", role: .cancel) { showGoalEditor = false }
+            }
+            .alert("删除当前目标？", isPresented: $confirmGoalClear) {
+                Button("删除", role: .destructive) {
+                    confirmGoalClear = false
+                    store.clearGoal()
+                }
+                Button("取消", role: .cancel) { confirmGoalClear = false }
+            } message: {
+                Text("删除后，智能体不再持有这个持续目标。")
+            }
+        }
+    }
+}
+
+private struct TaskPanel: View {
+    let tasks: [GatewayTask]
+    @Binding var expanded: Bool
+
+    private var completed: Int { tasks.filter { $0.status == "completed" }.count }
+    private var active: Int { tasks.filter { $0.status == "in_progress" }.count }
+
+    private var summary: String {
+        var parts: [String] = []
+        if completed > 0 { parts.append("\(completed) 已完成") }
+        if active > 0 { parts.append("\(active) 进行中") }
+        let pending = tasks.count - completed - active
+        if pending > 0 { parts.append("\(pending) 待处理") }
+        return parts.joined(separator: " · ").isEmpty ? "暂无任务" : parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeOut(duration: 0.22)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "checklist")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.secondary)
+                    Text("任务")
+                        .font(.headline)
+                    Text(summary)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.up")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(expanded ? 0 : 180))
+                }
+                .contentShape(Rectangle())
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(expanded ? "收起任务" : "展开任务")
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(tasks.indices, id: \.self) { index in
+                        TaskRow(task: tasks[index])
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+            }
+        }
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+private struct TaskRow: View {
+    let task: GatewayTask
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Group {
+                switch task.status {
+                case "completed":
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                case "in_progress":
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(DSHColor.ocean)
+                default:
+                    Image(systemName: "circle")
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .font(.system(size: 18))
+            .frame(width: 24, height: 24)
+            Text(task.content)
+                .font(.body)
+                .foregroundStyle(task.status == "completed" ? .secondary : .primary)
+                .lineLimit(2)
+        }
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct GoalPanel: View {
+    let phase: String
+    let objective: String
+    let mutationKind: String?
+    let onPauseResume: () -> Void
+    let onEdit: () -> Void
+    let onClear: () -> Void
+
+    private var isActive: Bool { phase == "active" }
+
+    private var phaseLabel: String {
+        switch phase {
+        case "active": "进行中的目标"
+        case "paused": "已暂停的目标"
+        case "blocked": "受阻的目标"
+        default: "当前目标"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "target")
+                .font(.system(size: 22))
+                .foregroundStyle(.secondary)
+            Text(phaseLabel)
+                .font(.headline)
+            Text(objective)
+                .font(.body)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .layoutPriority(1)
+            Spacer(minLength: 4)
+            if mutationKind != nil {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(DSHColor.ocean)
+                    .frame(width: 36, height: 36)
+            } else {
+                goalButton(systemName: isActive ? "pause.circle" : "play.circle", label: isActive ? "暂停目标" : "继续目标", action: onPauseResume)
+                goalButton(systemName: "pencil.line", label: "编辑目标", action: onEdit)
+                goalButton(systemName: "trash", label: "删除目标", action: onClear)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private func goalButton(systemName: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 20))
+                .foregroundStyle(.secondary)
+                .frame(width: 36, height: 36)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
 // MARK: - 协议通知中心（protocolNotices 展示）
 
 struct NoticeListView: View {

@@ -3,6 +3,14 @@
 本文件记录 dsh-mobile（DeepSeek Harness 移动客户端：iOS / Android）的版本变更。
 遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循语义化版本。
 
+## [1.6.11] - 2026-09-16
+
+- iOS 跟尾修复：自适应高度布局抖动不再误判脱离底部；历史落定后贴底重锚；
+  点按展开行后停在底部仍粘住跟随。
+- iOS 新增任务/目标面板（对齐安卓）：输入框上方占位把对话顶上去，任务折叠、
+  目标暂停/继续/编辑/删除，变更中转圈。
+- 两端版本号统一为 `1.6.11`（Android build 19 / iOS build 15）。
+
 ## [1.6.10] - 2026-09-16
 
 - iOS 通知白字根因修复：工作区 `.foregroundStyle(.white)` 只罩深色滚动内容，

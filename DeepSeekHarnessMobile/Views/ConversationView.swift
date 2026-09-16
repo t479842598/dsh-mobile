@@ -164,6 +164,7 @@ struct ConversationView: View {
                         .padding(.bottom, composerBottomPadding)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                     } else {
+                        TaskGoalPanels()
                         composer
                     }
                 }
@@ -220,6 +221,15 @@ struct ConversationView: View {
             // self-sized layout at the bottom; the mask is removed only from
             // `onBottomAlignmentCompleted` above.
             viewportScrollToBottomToken &+= 1
+        }
+        .onChange(of: isLoadingSelectedHistory) { wasLoading, isLoading in
+            // 历史落定后若已贴底，重锚一次到底部：自适应高度尘埃落定后的最终位置。
+            // 上滑翻阅旧记录时（已脱离底部）不打扰。
+            if wasLoading, !isLoading,
+               historyPresentationSessionID == store.selectedSessionId,
+               isPinnedToBottom, !conversationItems.isEmpty {
+                viewportScrollToBottomToken &+= 1
+            }
         }
         .task(id: store.selectedSessionId) {
             runStart = nil
