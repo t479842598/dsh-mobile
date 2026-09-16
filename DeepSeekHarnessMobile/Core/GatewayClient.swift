@@ -53,6 +53,12 @@ class GatewayClient: ObservableObject {
         beginConnection(to: payload.publicUrl, pairingCode: payload.pairingCode, resetReportedFailure: true)
     }
 
+    /// 该网关地址在 Keychain 里是否有已保存的配对凭据（冷启动自动重连判断用）。
+    func hasStoredCredential(for rawEndpoint: String) -> Bool {
+        guard let url = URL(string: rawEndpoint) else { return false }
+        return GatewayTokenStore.load(for: url) != nil
+    }
+
     /// Records the scene transition and optionally keeps the transport alive
     /// while AppStore owns a finite UIKit background-task assertion.
     func applicationDidEnterBackground(keepConnectionAlive: Bool) {

@@ -91,17 +91,8 @@ final class AppStore: ObservableObject {
     @Published private(set) var questionRequestStatuses: [String: GatewayQuestionRequestStatus] = [:]
     @Published private(set) var supportsImages = false
 
-    /// 直连传输实例。继承 GatewayClient 复用公开接口与视图绑定。
-    @Published private(set) var gateway: DshDirectClient
-    @Published var directBaseURL: String {
-        didSet { UserDefaults.standard.set(directBaseURL, forKey: "direct.baseURL") }
-    }
-    @Published var directUsername: String {
-        didSet { UserDefaults.standard.set(directUsername, forKey: "direct.username") }
-    }
-    @Published var directRememberPassword: Bool {
-        didSet { UserDefaults.standard.set(directRememberPassword, forKey: "direct.rememberPassword") }
-    }
+    /// 网关桥传输实例（上游模式：ws://host:3080/ws/mobile + 扫码/手动配对）。
+    @Published private(set) var gateway: GatewayClient
     private var pendingHistorySessionId: String?
     private var historyRequestTokens: [String: UUID] = [:]
     private var historyPaginationCursors: [String: Set<Int>] = [:]
@@ -164,12 +155,8 @@ final class AppStore: ObservableObject {
         endpoint = UserDefaults.standard.string(forKey: "gateway.endpoint") ?? "ws://127.0.0.1:3080/ws/mobile"
         if let data = UserDefaults.standard.data(forKey: "gateway.sessions"),
            let decoded = try? JSONDecoder().decode([SessionSummary].self, from: data) { sessions = decoded }
-        directBaseURL = UserDefaults.standard.string(forKey: "direct.baseURL") ?? ""
-        directUsername = UserDefaults.standard.string(forKey: "direct.username") ?? ""
-        directRememberPassword = UserDefaults.standard.object(forKey: "direct.rememberPassword") as? Bool ?? true
         notificationsEnabled = UserDefaults.standard.object(forKey: "notifications.enabled") as? Bool ?? true
-        let client = DshDirectClient()
-        gateway = client
+        gateway = GatewayClient()
         gateway.onFrame = { [weak self] frame in self?.handle(frame) }
         gateway.onConnectionFailure = { [weak self] detail in
             self?.handleConnectionFailure(detail)
@@ -237,62 +224,22 @@ final class AppStore: ObservableObject {
         return sessions.filter { !groupedSessionIds.contains($0.id) }
     }
 
+    /// 网关桥模式连接（上游模式）：直连 dsh 网页自带的 Mobile Gateway
+    ///（ws://host:3080/ws/mobile），扫码/手动配对后鉴权。
     func connect() {
         resetOutstandingRequests()
         presentsNextConnectionFailureAsAlert = true
         lastError = nil
-        connectDirect()
+        gateway.connect(to: endpoint)
     }
 
-    /// 设置页直连入口：先按表单落凭据，再走统一 connect 流程。
-    func connectDirect(password: String) {
-        guard let base = DshDirectAuthService.normalizedBaseURL(directBaseURL) else {
-            lastError = "直连地址无效，请输入 http(s):// 开头的完整地址（例如 https://ds.example.com）。"
-            return
-        }
-        directBaseURL = base.absoluteString
-        var credentials = DshDirectCredentialStore.load(baseURL: base)
-        credentials.username = directUsername.isEmpty ? nil : directUsername
-        // 勾选"记住密码"才落 Keychain；未勾选时密码仅注入本次连接使用。
-        if directRememberPassword {
-            credentials.password = password.isEmpty ? credentials.password : password
-        } else {
-            credentials.password = nil
-        }
-        DshDirectCredentialStore.saveQuietly(credentials, baseURL: base)
-        gateway.transientPassword = directRememberPassword ? nil : (password.isEmpty ? nil : password)
-        gateway.connect(to: base.absoluteString)
-    }
-
-    private func connectDirect() {
-        gateway.connect(to: directBaseURL)
-    }
-
-    /// 退出直连登录：清除该部署的全部凭据并断开。
-    func disconnectDirectAndForgetCredentials() {
-        guard let base = DshDirectAuthService.normalizedBaseURL(directBaseURL) else { return }
-        DshDirectCredentialStore.delete(baseURL: base)
-        gateway.disconnect()
-    }
-
-    var directHasStoredCredentials: Bool {
-        guard let base = DshDirectAuthService.normalizedBaseURL(directBaseURL) else { return false }
-        let credentials = DshDirectCredentialStore.load(baseURL: base)
-        return credentials.token != nil || (credentials.username != nil && credentials.password != nil)
-    }
-
-    var hasStoredDirectPassword: Bool {
-        guard let base = DshDirectAuthService.normalizedBaseURL(directBaseURL) else { return false }
-        return DshDirectCredentialStore.load(baseURL: base).password != nil
-    }
-
-    /// 冷启动仅在已保存直连凭据时自动恢复连接；未配置过时给引导提示，
-    /// 而不是把首次启动变成一条「连接失败」报错。
+    /// 冷启动仅在已有该网关地址的配对凭据时自动恢复连接；未配对过给引导提示，
+    /// 而不是把首次启动变成一条「连接失败」报错（对齐上游模式）。
     func connectOnColdLaunchIfPaired() {
         guard !hasHandledColdLaunchConnection else { return }
         hasHandledColdLaunchConnection = true
-        guard directHasStoredCredentials else {
-            lastError = "尚未连接 DeepSeek Harness。请前往「设置 → 直连网页端」填写地址与账号密码后连接。"
+        guard gateway.hasStoredCredential(for: endpoint) else {
+            lastError = "尚未连接到 DeepSeek Harness。请点击主页右上角的钥匙按钮，扫描配对二维码或手动输入配对信息进行连接。"
             return
         }
         connect()

@@ -120,8 +120,8 @@ struct WorkspaceView: View {
 
     @ViewBuilder
     private var authenticationMenu: some View {
-        // 配对入口已移除——App 仅支持直连网页端模式。
-        EmptyView()
+        // 网关桥模式配对入口（上游模式）：钥匙按钮打开手动配对，扫码入口见配对表。
+        headerButton(systemName: "key.fill", accessibilityLabel: "设备认证", action: { showsManualPairing = true })
     }
 
     @ViewBuilder
